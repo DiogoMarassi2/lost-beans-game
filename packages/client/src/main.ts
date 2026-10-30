@@ -148,6 +148,12 @@ const slimePuddleViews = new Map<string, SlimePuddleView>();
 const spitProjectileViews = new Map<string, SpitProjectileView>();
 const mortarLobViews = new Map<string, MortarLobView>();
 const doorViews = new Map<string, DoorView>();
+/**
+ * Portas que o jogador local acabou de abrir/fechar. A porta mexe na hora na tela dele e o estado
+ * vindo do servidor é ignorado até confirmar a mudança (ou o prazo vencer), para ela não voltar
+ * e abrir de novo enquanto o pedido viaja pela rede.
+ */
+const pendingDoors = new Map<string, { open: boolean; until: number }>();
 const c4MineViews = new Map<string, C4MineView>();
 const playerHpMap = new Map<string, number>();
 const zombieHpMap = new Map<string, number>();
@@ -396,6 +402,7 @@ hud.onOpenShop = () => {
 };
 
 const triggerMatchRestart = () => {
+  pendingDoors.clear();
   sound.playRespawn();
   sound.stopHelicopterSound();
   network.sendRespawn();
@@ -1026,6 +1033,11 @@ network.onStateChange = (state: NetArenaState) => {
   if (state.doors) {
     state.doors.forEach((door) => {
       const dv = doorViews.get(door.id);
+      const pending = pendingDoors.get(door.id);
+      if (pending) {
+        if (door.isOpen !== pending.open && performance.now() < pending.until) return;
+        pendingDoors.delete(door.id);
+      }
       if (dv) {
         const wasOpen = dv.isOpen();
         dv.setOpen(door.isOpen);
@@ -1210,8 +1222,9 @@ sceneManager.renderer.setAnimationLoop(() => {
           dv.setOpen(nextState);
           if (nextState) sound.playDoorOpen();
           else sound.playDoorClose();
+          pendingDoors.set(nearestDoor.id, { open: nextState, until: performance.now() + 1500 });
+          network.sendInteractDoor(nearestDoor.id, nextState);
         }
-        network.sendInteractDoor(nearestDoor.id);
       }
     }
 

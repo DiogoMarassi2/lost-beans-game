@@ -413,9 +413,10 @@ export class NetworkManager {
     this.room.send(ClientMessage.BuyItem, { item });
   }
 
-  sendInteractDoor(doorId?: string): void {
+  /** `open` é o estado desejado da porta, para o servidor não inverter duas vezes o mesmo clique. */
+  sendInteractDoor(doorId?: string, open?: boolean): void {
     if (!this.room) return;
-    this.room.send(ClientMessage.InteractDoor, { doorId });
+    this.room.send(ClientMessage.InteractDoor, { doorId, open });
   }
 
   sendRespawn(): void {

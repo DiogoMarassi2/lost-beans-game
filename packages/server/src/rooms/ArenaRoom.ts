@@ -348,7 +348,7 @@ export class ArenaRoom extends Room<ArenaState> {
     });
 
     // ─── Interação com Portas (Abrir / Fechar com a tecla [E]) ─────────
-    this.onMessage(ClientMessage.InteractDoor, (client, data: { doorId?: string }) => {
+    this.onMessage(ClientMessage.InteractDoor, (client, data: { doorId?: string; open?: boolean }) => {
       const p = this.state.players.get(client.sessionId);
       if (!p || p.hp <= 0) return;
 
@@ -380,7 +380,10 @@ export class ArenaRoom extends Room<ArenaState> {
         return;
       }
 
-      targetDoor.isOpen = !targetDoor.isOpen;
+      // O cliente manda o estado que já está mostrando; sem ele, apenas inverte
+      const nextOpen = typeof data?.open === "boolean" ? data.open : !targetDoor.isOpen;
+      if (nextOpen === targetDoor.isOpen) return;
+      targetDoor.isOpen = nextOpen;
       console.log(`[ArenaRoom] ${p.name} ${targetDoor.isOpen ? "ABRIU" : "FECHOU"} a porta '${targetDoor.name}'`);
 
       // Abrir a porta da casinha inicial pela primeira vez inicia a contagem para a 1ª Horda
