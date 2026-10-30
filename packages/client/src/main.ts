@@ -1651,3 +1651,4 @@ window.addEventListener("keydown", (e: KeyboardEvent) => {
   }
 });
 
+(window as any).__coverSend = (t: string, m: unknown) => network.send(t, m); // TEMP-COVER

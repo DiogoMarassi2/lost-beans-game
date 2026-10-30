@@ -118,6 +118,7 @@ export class PlayerView {
   private readonly muzzleFlash: THREE.Sprite;
   private readonly muzzleLight: THREE.PointLight;
   private readonly baseColor: THREE.Color;
+  private readonly bellyMat: THREE.MeshStandardMaterial;
   private recoil = 0;
   private muzzleTimer = 0;
   private hitFlashTimer = 0;
@@ -173,15 +174,13 @@ export class PlayerView {
     this.wobble.add(body);
 
     // Barriguinha mais clara
-    const belly = new THREE.Mesh(
-      new THREE.SphereGeometry(0.36, 20, 16),
-      new THREE.MeshStandardMaterial({
-        color: c.clone().lerp(new THREE.Color("#ffffff"), 0.45),
-        roughness: 0.4,
-        emissive: c,
-        emissiveIntensity: 0.15,
-      }),
-    );
+    this.bellyMat = new THREE.MeshStandardMaterial({
+      color: c.clone().lerp(new THREE.Color("#ffffff"), 0.45),
+      roughness: 0.4,
+      emissive: c,
+      emissiveIntensity: 0.15,
+    });
+    const belly = new THREE.Mesh(new THREE.SphereGeometry(0.36, 20, 16), this.bellyMat);
     belly.scale.set(1, 1.15, 0.5);
     belly.position.set(0, 0.62, 0.3);
     this.wobble.add(belly);
@@ -840,8 +839,13 @@ export class PlayerView {
     if (appearance.color && appearance.color !== this.currentColor) {
       this.currentColor = appearance.color;
       const c = new THREE.Color(appearance.color);
+      // baseColor é a cor que o corpo volta a ter a cada quadro (fora do flash de dano)
+      this.baseColor.copy(c);
       this.bodyMat.color.copy(c);
       this.bodyMat.emissive.copy(c);
+      this.bellyMat.color.copy(c.clone().lerp(new THREE.Color("#ffffff"), 0.45));
+      this.bellyMat.emissive.copy(c);
+      if (this.ring) (this.ring.material as THREE.MeshBasicMaterial).color.copy(c);
       if (this.handL && this.handR) {
         const hMat = this.handL.material as THREE.MeshStandardMaterial;
         hMat.color.copy(c.clone().multiplyScalar(0.85));
