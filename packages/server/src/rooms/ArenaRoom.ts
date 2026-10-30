@@ -137,6 +137,10 @@ export class ArenaRoom extends Room<ArenaState> {
       });
     });
 
+    this.onMessage(ClientMessage.BulletHit, (client, zombieId: unknown) => {
+      this.combat.applyClientHit(this.state, client.sessionId, zombieId);
+    });
+
     this.onMessage(ClientMessage.Reload, (client) => {
       this.combat.triggerReload(client.sessionId, this.state);
     });

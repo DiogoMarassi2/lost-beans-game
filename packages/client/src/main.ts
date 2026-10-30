@@ -91,8 +91,9 @@ const views = new Map<string, PlayerView>();
 const bulletViews = new Map<string, BulletView>();
 /**
  * Balas do jogador local desenhadas na hora do disparo (sem esperar o servidor, que fica a um ping
- * de distância). Só visuais: o dano continua sendo calculado pelo servidor. As balas do jogador
- * local que chegam do servidor não são desenhadas, para não aparecerem em dobro.
+ * de distância). O acerto também é decidido aqui, contra os zumbis como aparecem na tela, e
+ * enviado ao servidor, que confere e aplica o dano. As balas do jogador local que chegam do
+ * servidor não são desenhadas, para não aparecerem em dobro.
  */
 const localBullets: { view: BulletView; age: number }[] = [];
 
@@ -123,11 +124,13 @@ const updateLocalBullets = (dt: number): void => {
     if (!done) done = getStaticCollidersNear(x, z).some((b) => hitsBox(x, z, b));
     if (!done) done = doorColliders.some((b) => hitsBox(x, z, b));
     if (!done) {
-      for (const zView of zombieViews.values()) {
+      for (const [zombieId, zView] of zombieViews) {
         if (!zView.isAlive) continue;
         const r = zView.radius + BULLET_RADIUS;
         if ((x - zView.position.x) ** 2 + (z - zView.position.z) ** 2 < r * r) {
           done = true;
+          zView.flashHit();
+          network.sendBulletHit(zombieId);
           break;
         }
       }

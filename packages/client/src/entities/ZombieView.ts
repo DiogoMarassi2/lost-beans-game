@@ -1793,8 +1793,8 @@ export class ZombieView {
       this.hasPose = true;
     }
 
-    // Feedback de dano
-    if (hp < this.currentHp && state === "alive") {
+    // Feedback de dano (pode já ter piscado na hora do acerto local, via flashHit)
+    if (hp < this.currentHp && state === "alive" && this.hitFlashTimer <= 0) {
       this.hitFlashTimer = 0.12;
     }
 
@@ -2677,6 +2677,11 @@ export class ZombieView {
   }
 
   /** Desenha a barra de vida (formato épico para o Chefe ou segmentada para os demais zumbis) */
+  /** Pisca o zumbi imediatamente quando uma bala local o acerta, sem esperar o servidor. */
+  flashHit(): void {
+    if (this.isAlive) this.hitFlashTimer = 0.12;
+  }
+
   private drawHpBar(hp: number, maxHp: number): void {
     const isEpicBoss = this.type === "boss" || this.type === "spider_boss" || this.type === "werewolf_boss" || this.type === "sack_boss" || maxHp >= 20;
     const canvas = document.createElement("canvas");

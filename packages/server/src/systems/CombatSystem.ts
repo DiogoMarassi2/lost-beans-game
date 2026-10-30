@@ -46,6 +46,12 @@ import type { ZombieSchema } from "../schemas/ZombieSchema";
  */
 export class CombatSystem {
   private readonly cooldowns = new Map<string, number>();
+  /**
+   * Disparos de cada jogador que ainda podem causar dano. O acerto é detectado no cliente (que vê o
+   * zumbi onde ele está na tela dele) e confirmado aqui via applyClientHit, consumindo um disparo.
+   */
+  private readonly shotCredits = new Map<string, { damage: number; firedAt: number }[]>();
+  private clock = 0;
   private readonly reloadTimers = new Map<string, number>();
   private bulletIdCounter = 0;
   private c4IdCounter = 0;
@@ -63,6 +69,8 @@ export class CombatSystem {
     dt: number,
     extraColliders?: readonly BoxCollider[],
   ): void {
+    this.clock += dt;
+
     // 1) Atualiza cooldowns de ataque/uso de itens
     for (const [id, cd] of this.cooldowns) {
       if (cd > 0) this.cooldowns.set(id, Math.max(0, cd - dt));
@@ -275,6 +283,10 @@ export class CombatSystem {
         bullet.damage = tier.damage;
 
         state.bullets.set(bullet.id, bullet);
+
+        let credits = this.shotCredits.get(id);
+        if (!credits) this.shotCredits.set(id, (credits = []));
+        credits.push({ damage: tier.damage, firedAt: this.clock });
         return;
       }
 
@@ -348,28 +360,14 @@ export class CombatSystem {
         }
       }
 
-      // Colisão com zumbis vivos
-      let hitZombie = false;
+      // Colisão com zumbis vivos: a bala some, mas o dano vem do acerto confirmado pelo cliente
       state.zombies.forEach((zombie) => {
-        if (hitZombie || zombie.state !== "alive") return;
+        if (zombie.state !== "alive") return;
         const config = ENEMY_CONFIGS[zombie.type as EnemyTypeId] ?? ENEMY_CONFIGS.standard;
         const dx = bullet.x - zombie.x;
         const dz = bullet.z - zombie.z;
         const minDist = config.radius + BULLET_RADIUS;
-        if (dx * dx + dz * dz < minDist * minDist) {
-          hitZombie = true;
-          toRemove.push(id);
-          const dmg = bullet.damage || BULLET_DAMAGE;
-          zombie.hp = Math.max(0, zombie.hp - dmg);
-          if (zombie.hp === 0) {
-            const shooter = state.players.get(bullet.playerId);
-            this.handleZombieDeath(state, zombie, shooter);
-          } else {
-            // Se tomou tiro e sobreviveu, fica furioso e persegue o atirador!
-            zombie.isAggro = true;
-            zombie.aiMode = "chasing";
-          }
-        }
+        if (dx * dx + dz * dz < minDist * minDist && !toRemove.includes(id)) toRemove.push(id);
       });
     });
 
@@ -715,13 +713,44 @@ export class CombatSystem {
     this.startReload(player, playerId);
   }
 
+  /**
+   * Aplica o dano de um tiro que acertou um zumbi na tela do atirador. Cada disparo real feito pelo
+   * servidor vale um acerto; acertos sem disparo correspondente, de zumbis mortos ou longe demais
+   * do atirador são ignorados.
+   */
+  applyClientHit(state: ArenaState, playerId: string, zombieId: unknown): void {
+    const credits = this.shotCredits.get(playerId);
+    if (!credits || typeof zombieId !== "string") return;
+    // Margem para o ping: a bala local pode ter voado até BULLET_LIFETIME antes do acerto chegar
+    while (credits.length > 0 && this.clock - credits[0]!.firedAt > BULLET_LIFETIME + 1.5) credits.shift();
+    const shot = credits[0];
+    const player = state.players.get(playerId);
+    const zombie = state.zombies.get(zombieId);
+    if (!shot || !player || !zombie || zombie.state !== "alive") return;
+
+    const maxRange = BULLET_SPEED * BULLET_LIFETIME + 4;
+    if ((zombie.x - player.x) ** 2 + (zombie.z - player.z) ** 2 > maxRange * maxRange) return;
+
+    credits.shift();
+    zombie.hp = Math.max(0, zombie.hp - (shot.damage || BULLET_DAMAGE));
+    if (zombie.hp === 0) {
+      this.handleZombieDeath(state, zombie, player);
+    } else {
+      // Se tomou tiro e sobreviveu, fica furioso e persegue o atirador!
+      zombie.isAggro = true;
+      zombie.aiMode = "chasing";
+    }
+  }
+
   removePlayer(playerId: string): void {
     this.cooldowns.delete(playerId);
+    this.shotCredits.delete(playerId);
     this.reloadTimers.delete(playerId);
   }
 
   reset(): void {
     this.cooldowns.clear();
+    this.shotCredits.clear();
     this.reloadTimers.clear();
   }
 

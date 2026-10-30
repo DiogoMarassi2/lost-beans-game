@@ -13,6 +13,7 @@ export const ClientMessage = {
   DebugTriggerHorde: "debug_trigger_horde",
   EnterWorld: "enter_world",
   UseDefibrillator: "use_defibrillator",
+  BulletHit: "bullet_hit",
 } as const;
 export type ClientMessage = (typeof ClientMessage)[keyof typeof ClientMessage];
 

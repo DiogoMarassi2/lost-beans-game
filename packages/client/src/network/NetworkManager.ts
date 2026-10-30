@@ -393,6 +393,11 @@ export class NetworkManager {
     this.room.send(ClientMessage.Input, msg);
   }
 
+  /** Avisa o servidor que uma bala do jogador local acertou este zumbi (na tela dele). */
+  sendBulletHit(zombieId: string): void {
+    this.room?.send(ClientMessage.BulletHit, zombieId);
+  }
+
   sendReload(): void {
     if (!this.room) return;
     this.room.send(ClientMessage.Reload);
