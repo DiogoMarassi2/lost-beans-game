@@ -51,6 +51,11 @@ export class BulletView {
     this.root.add(this.glow);
   }
 
+  /** Posição atual da bala no plano do chão. */
+  get position(): { x: number; z: number } {
+    return { x: this.x, z: this.z };
+  }
+
   /** Atualiza a posição com o snapshot mais recente do servidor. */
   sync(serverX: number, serverZ: number): void {
     // Corrige desvios sem puxão brusco

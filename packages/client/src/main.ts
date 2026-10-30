@@ -1,10 +1,18 @@
 import * as THREE from "three";
 import {
+  BULLET_LIFETIME,
+  BULLET_RADIUS,
   ClientMessage,
   DEFIBRILLATOR_REVIVE_RADIUS,
   DOOR_DEFINITIONS,
   getActiveDoorColliders,
+  getStaticCollidersNear,
   GUN_TIERS,
+  MAP_MAX_X,
+  MAP_MAX_Z,
+  MAP_MIN_X,
+  MAP_MIN_Z,
+  OBSTACLES,
   INPUT_SEND_RATE,
   TICK_MS,
   KNIFE_TIERS,
@@ -81,6 +89,56 @@ welcomeModal.onClose = () => {
 const predictor = new LocalPredictor();
 const views = new Map<string, PlayerView>();
 const bulletViews = new Map<string, BulletView>();
+/**
+ * Balas do jogador local desenhadas na hora do disparo (sem esperar o servidor, que fica a um ping
+ * de distância). Só visuais: o dano continua sendo calculado pelo servidor. As balas do jogador
+ * local que chegam do servidor não são desenhadas, para não aparecerem em dobro.
+ */
+const localBullets: { view: BulletView; age: number }[] = [];
+
+const spawnLocalBullet = (gunLevel: number): void => {
+  const sin = Math.sin(lastAim);
+  const cos = Math.cos(lastAim);
+  // Mesma distância do cano usada pelo servidor (CombatSystem)
+  const muzzleDist = gunLevel >= 6 ? 0.95 : gunLevel >= 3 ? 0.85 : 0.75;
+  const view = new BulletView(predictor.x + sin * muzzleDist, predictor.z + cos * muzzleDist, lastAim);
+  sceneManager.add(view.root);
+  localBullets.push({ view, age: 0 });
+};
+
+/** Avança as balas locais com as mesmas colisões do servidor e remove as que acertaram algo. */
+const updateLocalBullets = (dt: number): void => {
+  const doorColliders = getActiveDoorColliders(doorViews);
+  const hitsBox = (x: number, z: number, box: { minX: number; maxX: number; minZ: number; maxZ: number }) =>
+    x >= box.minX - BULLET_RADIUS && x <= box.maxX + BULLET_RADIUS && z >= box.minZ - BULLET_RADIUS && z <= box.maxZ + BULLET_RADIUS;
+
+  for (let i = localBullets.length - 1; i >= 0; i--) {
+    const lb = localBullets[i]!;
+    lb.age += dt;
+    lb.view.update(dt);
+    const { x, z } = lb.view.position;
+
+    let done = lb.age >= BULLET_LIFETIME || x <= MAP_MIN_X || x >= MAP_MAX_X || z <= MAP_MIN_Z || z >= MAP_MAX_Z;
+    if (!done) done = OBSTACLES.some((o) => (x - o.x) ** 2 + (z - o.z) ** 2 < (o.r + BULLET_RADIUS) ** 2);
+    if (!done) done = getStaticCollidersNear(x, z).some((b) => hitsBox(x, z, b));
+    if (!done) done = doorColliders.some((b) => hitsBox(x, z, b));
+    if (!done) {
+      for (const zView of zombieViews.values()) {
+        if (!zView.isAlive) continue;
+        const r = zView.radius + BULLET_RADIUS;
+        if ((x - zView.position.x) ** 2 + (z - zView.position.z) ** 2 < r * r) {
+          done = true;
+          break;
+        }
+      }
+    }
+
+    if (done) {
+      lb.view.dispose();
+      localBullets.splice(i, 1);
+    }
+  }
+};
 const zombieViews = new Map<string, ZombieView>();
 const ammoBoxViews = new Map<string, AmmoBoxView>();
 const slimePuddleViews = new Map<string, SlimePuddleView>();
@@ -346,6 +404,8 @@ const triggerMatchRestart = () => {
 
   for (const [, bView] of bulletViews) bView.dispose();
   bulletViews.clear();
+  for (const lb of localBullets) lb.view.dispose();
+  localBullets.length = 0;
 
   for (const [, sView] of spitProjectileViews) sView.dispose();
   spitProjectileViews.clear();
@@ -703,6 +763,8 @@ network.onStateChange = (state: NetArenaState) => {
   // 2) Balas / Projéteis
   if (state.bullets) {
     state.bullets.forEach((b, id) => {
+      // Balas do jogador local já foram desenhadas na hora do disparo (localBullets)
+      if (b.playerId === network.sessionId) return;
       let bView = bulletViews.get(id);
       if (!bView) {
         bView = new BulletView(b.x, b.z, b.angle);
@@ -1267,6 +1329,7 @@ sceneManager.renderer.setAnimationLoop(() => {
                 const tier = GUN_TIERS.find((t) => t.level === gLvl) ?? GUN_TIERS[0]!;
                 gunCooldown = tier.fireCooldown;
                 sound.playShoot();
+                spawnLocalBullet(gLvl);
                 localView.triggerRecoil();
                 cameraController.addShake(0.08);
               }
@@ -1379,6 +1442,7 @@ sceneManager.renderer.setAnimationLoop(() => {
   for (const bView of bulletViews.values()) {
     bView.update(dt);
   }
+  updateLocalBullets(dt);
 
   // 6) Interpolação e animação dos zumbis
   for (const zView of zombieViews.values()) {
