@@ -1,0 +1,21 @@
+app = "dark-beans-zombies"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  SERVER_PORT = "2567"
+  # Opcional: se quiser forçar a URL pública para Vite
+  # VITE_SERVER_URL = "wss://dark-beans-zombies.fly.dev"
+
+[[services]]
+  internal_port = 2567
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443

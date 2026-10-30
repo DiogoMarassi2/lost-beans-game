@@ -1,0 +1,775 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lost Beans: Survival Horde — Survive the horde with your friends</title>
+    <meta
+      name="description"
+      content="Lost Beans: Survival Horde is a cooperative browser survival game. Create a room, customize your character, and battle zombie hordes with your friends."
+    />
+    <meta name="theme-color" content="#07060d" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫘</text></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bungee&family=Caveat:wght@400;600;700&family=Marcellus&family=Outfit:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/styles/index.css" />
+  </head>
+  <body>
+    <main id="app">
+      <!-- Canvas 3D (Three.js) -->
+      <div id="game-root" aria-label="Game Arena"></div>
+
+      <!-- Efeitos de tela sobre o canvas -->
+      <div class="vignette" aria-hidden="true"></div>
+      <div class="grain" aria-hidden="true"></div>
+
+      <!-- HUD -->
+      <section id="hud" class="hud hidden" aria-label="Game HUD">
+        <header class="hud-top">
+          <div class="brand brand--small">
+            <span class="brand__title">Lost Beans</span>
+            <span class="brand__sub">Survival Horde</span>
+          </div>
+
+          <!-- Relógio de Sobrevivência Acelerado e Indicador de Horda -->
+          <div id="hud-clock-widget" class="survival-clock glass" aria-label="Survival Clock and Horde">
+            <div class="survival-clock__row">
+              <svg class="survival-clock__icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>
+                <path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <span id="hud-clock-time" class="survival-clock__time">00:00</span>
+            </div>
+            <div class="survival-clock__status">
+              <span id="hud-horde-badge" class="survival-clock__badge">HORDE 1 IN 03:00</span>
+            </div>
+          </div>
+
+          <!-- Notificação de Chegada do Resgate (fica no lugar do timer, substituindo-o APENAS quando o sinalizador ascende) -->
+          <div id="hud-rescue-widget" class="rescue-widget glass hidden is-hidden" aria-label="Rescue Arrival Status">
+            <div class="rescue-widget__row">
+              <span class="rescue-widget__icon">🚁</span>
+              <span id="hud-rescue-title" class="rescue-widget__title">RESGATE A CAMINHO</span>
+            </div>
+            <div class="rescue-widget__status">
+              <span id="hud-rescue-text" class="rescue-widget__text">POUSO EM 30s</span>
+            </div>
+          </div>
+
+          <div class="room-card glass">
+            <div class="room-card__info">
+              <span class="label">Room</span>
+              <span id="hud-room-code" class="room-card__code">-----</span>
+            </div>
+            <button id="btn-copy-link" class="btn btn--ghost" type="button">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z"/></svg>
+              Copy Link
+            </button>
+          </div>
+        </header>
+
+        <aside class="players-panel glass" aria-label="Players in room">
+          <div class="players-panel__header">
+            <span class="label">Survivors</span>
+            <span id="hud-player-count" class="pill">0/8</span>
+          </div>
+          <ul id="hud-player-list" class="player-list"></ul>
+        </aside>
+
+        <footer class="hud-bottom">
+          <div class="hud-bottom-group">
+            <!-- Traços de Armadura e Vida (um abaixo do outro, minimalista) -->
+            <div id="hud-status-console" class="status-console glass" aria-label="Armor, Health and Ammo">
+              <!-- Traços de Armadura cinza (aparece acima da vida, quebra junto ao esgotar) -->
+              <div id="hud-armor-row" class="armor-pips is-hidden" aria-label="Armor points"></div>
+
+              <!-- Traços de Vida na cor -->
+              <div id="hud-hp-pips" class="hp-pips" aria-label="Health points"></div>
+
+              <!-- Número de Balas: x de y e balas reservas -->
+              <div id="hud-ammo-row" class="ammo-row" aria-label="Ammo">
+                <div class="ammo-digits">
+                  <span id="hud-ammo-current" class="ammo-digits__cur">12</span>
+                  <span class="ammo-digits__sep">/</span>
+                  <span id="hud-ammo-max" class="ammo-digits__max">12</span>
+                </div>
+                <div class="ammo-reserve">
+                  <span class="ammo-reserve__label">reserve</span>
+                  <span id="hud-ammo-reserve" class="ammo-reserve__val">12</span>
+                </div>
+              </div>
+              <div id="hud-reload-track" class="reload-track is-hidden" aria-hidden="true">
+                <div id="hud-reload-fill" class="reload-fill"></div>
+              </div>
+            </div>
+
+            <!-- Moedas Coletadas (Ganhas eliminando zumbis) -->
+            <div id="hud-coins" class="hud-coins glass" aria-label="Coins">
+              <svg class="hud-coin-svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" fill="#fbc531" stroke="#e1b12c" stroke-width="2"/>
+                <path d="M12 6.5v11M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.5-1.5 2-2.5 2.5s-2.5 1-2.5 2.5a2.5 2.5 0 0 0 5 0" stroke="#713f12" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+              </svg>
+              <span id="hud-coins-val" class="hud-coins__val">0</span>
+            </div>
+
+            <!-- Inventário Tático (4 slots: 1=Faca, 2=Arma, 3=Utilitários, 4=Chefes/Sinalizador) -->
+            <div id="hud-inventory" class="inventory-bar glass" aria-label="Inventory">
+              <div id="inv-slot-0" class="inv-slot is-active" data-slot="0" title="[1] Knife"></div>
+              <div id="inv-slot-1" class="inv-slot is-empty" data-slot="1" title="[2] Gun"></div>
+              <div id="inv-slot-2" class="inv-slot is-empty" data-slot="2" title="[3] Utilities"></div>
+              <div id="inv-slot-3" class="inv-slot inv-slot--boss is-empty" data-slot="3" title="[4] Boss Relic / Flare"></div>
+            </div>
+          </div>
+
+          <div id="hud-net" class="net-status glass">
+            <span class="net-status__dot"></span>
+            <span id="hud-net-text">Connecting…</span>
+          </div>
+        </footer>
+      </section>
+
+      <!-- Indicador de Interação: Pressione [E] para Loja -->
+      <div id="hud-shop-prompt" class="shop-prompt hidden" aria-hidden="true">
+        <span class="kbd-badge">E</span>
+        <span class="shop-prompt__text">Shop</span>
+      </div>
+
+      <!-- Indicador de Interação com Portas: Pressione [E] para Abrir / Fechar -->
+      <div id="hud-door-prompt" class="door-prompt hidden" aria-hidden="true">
+        <span class="kbd-badge">E</span>
+        <div class="door-prompt__content">
+          <span id="hud-door-prompt-text" class="door-prompt__text">Open Door</span>
+          <span id="hud-door-prompt-name" class="door-prompt__name">Starter Cabin</span>
+        </div>
+      </div>
+
+      <!-- Indicador de Reanimação com Desfibrilador: Clique [Botão Esq.] para Reviver -->
+      <div id="hud-revive-prompt" class="revive-prompt hidden" aria-hidden="true">
+        <span class="kbd-badge kbd-badge--mouse">L-CLICK</span>
+        <div class="revive-prompt__content">
+          <span id="hud-revive-prompt-text" class="revive-prompt__text">⚡ Revive Teammate</span>
+          <span id="hud-revive-prompt-name" class="revive-prompt__name">Defibrillator</span>
+        </div>
+      </div>
+
+      <!-- Indicador de Interação com o Livro: Pressione [E] para Ler -->
+      <div id="hud-book-prompt" class="book-prompt hidden" aria-hidden="true">
+        <span class="kbd-badge">E</span>
+        <div class="book-prompt__content">
+          <span class="book-prompt__text">Read Diary</span>
+          <span class="book-prompt__name">Survival Guide</span>
+        </div>
+      </div>
+
+      <!-- Alerta de Paralisia de Teia da Rainha Aracnídea -->
+      <div id="hud-webbed-banner" class="webbed-banner hidden" aria-live="polite">
+        <span class="webbed-banner__icon">🕸️</span>
+        <span class="webbed-banner__text">TRAPPED IN WEB!</span>
+      </div>
+
+      <!-- Modal Minimalista da Loja em 2 Abas -->
+      <section id="shop-modal" class="shop-modal hidden" aria-modal="true" role="dialog" aria-labelledby="shop-title">
+        <div class="shop-modal__backdrop" id="shop-backdrop"></div>
+        <div class="shop-modal__dialog glass">
+          <!-- Topo da Loja: Título, Abas e Saldo de Moedas -->
+          <header class="shop-header">
+            <div class="shop-header__left">
+              <span class="shop-header__tag">SUPPLIES</span>
+              <h2 id="shop-title" class="shop-header__title">Survivor Equipment</h2>
+            </div>
+            <div class="shop-header__right">
+              <div class="shop-header__wallet">
+                <svg class="hud-coin-svg" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" fill="#fbc531" stroke="#e1b12c" stroke-width="2"/>
+                  <path d="M12 6.5v11M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.5-1.5 2-2.5 2.5s-2.5 1-2.5 2.5a2.5 2.5 0 0 0 5 0" stroke="#713f12" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+                </svg>
+                <span id="shop-coins-val" class="shop-header__coins">0</span>
+              </div>
+              <button id="btn-close-shop" class="btn-shop-close" type="button" aria-label="Close shop">✕</button>
+            </div>
+          </header>
+
+          <!-- ABA 1: Equipamentos (Armas, Faca, Bala, Bandagem, Armadura, etc.) -->
+          <div id="shop-panel-equip" class="shop-panel">
+            <div class="shop-columns">
+              <!-- Lista 1 de 4: Armamento e Suprimentos Básicos -->
+              <div class="shop-col">
+                <!-- 1) Arma de Fogo -->
+                <article class="shop-card" data-buy="gun_upgrade">
+                  <div id="shop-gun-icon" class="shop-card__icon-box">
+                    <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M21 7h-7l-1-2H3v6l2 1v6h4v-5h2l4-2h6V7zm-2 2h-3l-2 1h-2v2H7V9H5V7h6l1 2h7V9z"/></svg>
+                  </div>
+                  <div class="shop-card__info">
+                    <div class="shop-card__title-row">
+                      <span id="shop-gun-title" class="shop-card__title">Gun</span>
+                      <span id="shop-gun-level" class="shop-badge">Lvl. 1</span>
+                    </div>
+                    <span id="shop-gun-stat" class="shop-card__stat">1 Damage · 12 Ammo</span>
+                  </div>
+                  <button id="btn-buy-gun" class="btn-shop-buy" type="button" data-item="gun_upgrade">
+                    <span id="btn-buy-gun-text">🪙 5</span>
+                  </button>
+                </article>
+
+                <!-- 2) Faca de Combate -->
+                <article class="shop-card" data-buy="knife_upgrade">
+                  <div id="shop-knife-icon" class="shop-card__icon-box">
+                    <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M20.71 4.04c-.39-.39-1.02-.39-1.41 0l-7.07 7.07-1.42-1.41 1.42-1.42a1 1 0 0 0-1.42-1.41l-1.41 1.41-1.42-1.41a1 1 0 0 0-1.41 1.41l1.41 1.42-4.24 4.24a3 3 0 0 0 0 4.24l.71.71a3 3 0 0 0 4.24 0l4.24-4.24 1.42 1.41a1 1 0 0 0 1.41-1.41l-1.41-1.42 1.41-1.41a1 1 0 0 0 0-1.42l-1.41-1.41 7.07-7.07c.39-.39.39-1.03 0-1.42z"/></svg>
+                  </div>
+                  <div class="shop-card__info">
+                    <div class="shop-card__title-row">
+                      <span id="shop-knife-title" class="shop-card__title">Knife</span>
+                      <span id="shop-knife-level" class="shop-badge">Lvl. 1</span>
+                    </div>
+                    <span id="shop-knife-stat" class="shop-card__stat">1 Damage · 0.35s</span>
+                  </div>
+                  <button id="btn-buy-knife" class="btn-shop-buy" type="button" data-item="knife_upgrade">
+                    <span id="btn-buy-knife-text">🪙 4</span>
+                  </button>
+                </article>
+
+                <!-- 3) Munição / Bala -->
+                <article class="shop-card" data-buy="ammo">
+                  <div class="shop-card__icon-box">
+                    <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M19 4h-2V2h-2v2H9V2H7v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm-7 14H6v-6h6v6Zm7 0h-5v-6h5v6Zm0-8H5V6h14v4Z"/></svg>
+                  </div>
+                  <div class="shop-card__info">
+                    <div class="shop-card__title-row">
+                      <span class="shop-card__title">Ammo</span>
+                      <span class="shop-badge">+1 Mag</span>
+                    </div>
+                    <span class="shop-card__stat">Reserve</span>
+                  </div>
+                  <button id="btn-buy-ammo" class="btn-shop-buy" type="button" data-item="ammo">
+                    <span id="btn-buy-ammo-text">🪙 1</span>
+                  </button>
+                </article>
+
+                <!-- 4) Bandagem Médica -->
+                <article class="shop-card" data-buy="bandage">
+                  <div class="shop-card__icon-box">
+                    <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-1 16H6c-.55 0-1-.45-1-1V6c0-.55.45-1 1-1h12c.55 0 1 .45 1 1v12c0 .55-.45 1-1 1zm-7-2h2v-3h3v-2h-3V9h-2v3H8v2h3v3z"/></svg>
+                  </div>
+                  <div class="shop-card__info">
+                    <div class="shop-card__title-row">
+                      <span class="shop-card__title">Bandage</span>
+                      <span id="shop-bandage-count" class="shop-badge">0/3</span>
+                    </div>
+                    <span class="shop-card__stat">+3 HP (Slot 3)</span>
+                  </div>
+                  <button id="btn-buy-bandage" class="btn-shop-buy" type="button" data-item="bandage">
+                    <span id="btn-buy-bandage-text">🪙 2</span>
+                  </button>
+                </article>
+              </div>
+
+              <!-- Lista 2 de 4: Táticos e Especiais -->
+              <div class="shop-col">
+                <!-- 5) C4 Explosivo Tático -->
+                <article class="shop-card" data-buy="c4">
+                  <div class="shop-card__icon-box">
+                    <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2" fill="#334155"/><rect x="5" y="8" width="5" height="8" rx="1" fill="#94a3b8"/><rect x="12" y="9" width="7" height="4" rx="1" fill="#0f172a"/><circle cx="17.5" cy="11" r="1.5" fill="#ef4444"/><path d="M10 6V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2" stroke="#cbd5e1" stroke-width="1.5" fill="none"/></svg>
+                  </div>
+                  <div class="shop-card__info">
+                    <div class="shop-card__title-row">
+                      <span class="shop-card__title">Tactical C4</span>
+                      <span id="shop-c4-count" class="shop-badge">0/3</span>
+                    </div>
+                    <span class="shop-card__stat">5s Timer · Distraction (Slot 3)</span>
+                  </div>
+                  <button id="btn-buy-c4" class="btn-shop-buy" type="button" data-item="c4">
+                    <span id="btn-buy-c4-text">🪙 3</span>
+                  </button>
+                </article>
+
+                <!-- 6) Armadura (Colete Balístico) -->
+                <article class="shop-card" data-buy="armor">
+                  <div class="shop-card__icon-box">
+                    <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm0 2.18l6 2.25v4.66c0 4.14-2.73 8.01-6 9.07-3.27-1.06-6-4.93-6-9.07V6.43l6-2.25z"/></svg>
+                  </div>
+                  <div class="shop-card__info">
+                    <div class="shop-card__title-row">
+                      <span class="shop-card__title">Body Armor</span>
+                      <span id="shop-armor-status" class="shop-badge">5 Pts</span>
+                    </div>
+                    <span id="shop-armor-stat" class="shop-card__stat">Gray Bar (Slot 3)</span>
+                  </div>
+                  <button id="btn-buy-armor" class="btn-shop-buy" type="button" data-item="armor">
+                    <span id="btn-buy-armor-text">🪙 5</span>
+                  </button>
+                </article>
+
+                <!-- 7) Desfibrilador (Dispositivo Médico para Reviver Amigo) -->
+                <article class="shop-card shop-card--defibrillator" data-buy="defibrillator">
+                  <div class="shop-card__icon-box shop-card__icon-box--defibrillator">
+                    <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">
+                      <rect x="3" y="5" width="18" height="14" rx="2" fill="#eab308"/>
+                      <rect x="5" y="7" width="14" height="10" rx="1" fill="#0f172a"/>
+                      <path d="M6 12h2.5l1.5-3 2 6 1.5-4 1 2H18" fill="none" stroke="#22d3ee" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M13 1l-3 5h3l-2 5 5-6h-3z" fill="#facc15"/>
+                    </svg>
+                  </div>
+                  <div class="shop-card__info">
+                    <div class="shop-card__title-row">
+                      <span class="shop-card__title">Defibrillator</span>
+                      <span id="shop-defibrillator-status" class="shop-badge">Slot 3</span>
+                    </div>
+                    <span class="shop-card__stat">Revives fallen teammate (L-Click)</span>
+                  </div>
+                  <button id="btn-buy-defibrillator" class="btn-shop-buy" type="button" data-item="defibrillator">
+                    <span id="btn-buy-defibrillator-text">🪙 30</span>
+                  </button>
+                </article>
+
+                <!-- 8) Sinalizador (Requer os 4 Drops de Chefes) -->
+                <article class="shop-card shop-card--flare" data-buy="flare">
+                  <div class="shop-card__icon-box shop-card__icon-box--flare">
+                    <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">
+                      <rect x="9.5" y="8" width="5" height="13" rx="1.5" fill="#dc2626"/>
+                      <rect x="9.5" y="14" width="5" height="2.5" fill="#ffffff"/>
+                      <rect x="9" y="7" width="6" height="1.8" rx="0.5" fill="#991b1b"/>
+                      <path d="M12 1c-1.5 2-2.8 3.5-2.8 5.2 0 1.5 1.2 2.8 2.8 2.8s2.8-1.3 2.8-2.8c0-1.7-1.3-3.2-2.8-5.2z" fill="#facc15"/>
+                      <path d="M12 3c-.7 1-1.4 1.8-1.4 2.8 0 .8.6 1.4 1.4 1.4s1.4-.6 1.4-1.4c0-1-.7-1.8-1.4-2.8z" fill="#fff7ed"/>
+                      <circle cx="6" cy="4" r="1.1" fill="#f97316"/>
+                      <circle cx="18" cy="4" r="1.1" fill="#f97316"/>
+                      <circle cx="7.5" cy="7.5" r="0.9" fill="#fbbf24"/>
+                      <circle cx="16.5" cy="7.5" r="0.9" fill="#fbbf24"/>
+                    </svg>
+                  </div>
+                  <div class="shop-card__info">
+                    <div class="shop-card__title-row">
+                      <span class="shop-card__title">Military Flare</span>
+                      <span id="shop-flare-status" class="shop-badge">0/4 Drops</span>
+                    </div>
+                    <span id="shop-flare-stat" class="shop-card__stat">Sprout · Head · Tooth · Sack</span>
+                  </div>
+                  <button id="btn-buy-flare" class="btn-shop-buy btn-shop-buy--flare" type="button" data-item="flare">
+                    <span id="btn-buy-flare-text">🔒 4 Drops</span>
+                  </button>
+                </article>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Mira customizada (sem Pointer Lock) -->
+      <div id="crosshair" class="crosshair hidden" aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </div>
+
+      <!-- Menu Principal: Lost Beans -->
+      <section id="main-menu" class="main-menu" aria-label="Main Game Menu">
+        <!-- Tela 1: Inicial (Home) -->
+        <div id="menu-panel-home" class="menu-panel menu-panel--home glass">
+          <div class="menu-brand">
+            <div class="menu-bean-badge" aria-hidden="true">
+              <span class="badge-icon">🫘</span>
+            </div>
+            <h1 class="brand brand--hero">
+              <span class="brand__title">Lost Beans</span>
+              <span class="brand__sub">Survival Horde</span>
+            </h1>
+            <p class="menu-tagline">Night has fallen on the forgotten forest. Band together to survive.</p>
+          </div>
+
+          <div class="menu-home-actions">
+            <button id="btn-home-play" class="btn btn--primary btn--xl btn--play-pure" type="button">
+              PLAY
+            </button>
+          </div>
+        </div>
+
+        <!-- Tela 2: Divisão em 2 partes (Criação de Personagem à esquerda + Sala à direita) -->
+        <div id="menu-panel-staging" class="menu-panel menu-panel--split glass hidden">
+          <div class="split-layout">
+            <!-- Lado Esquerdo: Criação do Personagem -->
+            <div class="split-col split-col--character">
+              <div class="split-header">
+                <h2 class="split-title">Character Creation</h2>
+              </div>
+
+              <!-- Nome do Personagem -->
+              <div class="field field--character-name">
+                <span class="label">Character Name</span>
+                <input id="staging-input-name" type="text" maxlength="14" placeholder="Brave Bean" spellcheck="false" autocomplete="off" />
+              </div>
+
+              <!-- Preview 3D do Personagem -->
+              <div class="customizer-preview-box">
+                <canvas id="character-preview-canvas" width="280" height="250"></canvas>
+              </div>
+
+              <!-- Abas de Customização (Apenas Ícones Minimalistas Brancos, sem texto) -->
+              <nav class="customizer-tabs" aria-label="Customization Categories">
+                <button class="customizer-tab-btn is-active" data-tab="color" type="button" title="Color" aria-label="Color">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="13.5" cy="6.5" r=".5" fill="#ffffff"/>
+                    <circle cx="17.5" cy="10.5" r=".5" fill="#ffffff"/>
+                    <circle cx="8.5" cy="7.5" r=".5" fill="#ffffff"/>
+                    <circle cx="6.5" cy="12.5" r=".5" fill="#ffffff"/>
+                    <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>
+                  </svg>
+                </button>
+                <button class="customizer-tab-btn" data-tab="hair" type="button" title="Hair" aria-label="Hair">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 14c0-5 3.6-9 8-9s8 4 8 9"/>
+                    <path d="M8 5c1 2 2.5 4 4 4s3-2 4-4"/>
+                    <path d="M12 9v4"/>
+                  </svg>
+                </button>
+                <button class="customizer-tab-btn" data-tab="eyes" type="button" title="Eyes" aria-label="Eyes">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                </button>
+                <button class="customizer-tab-btn" data-tab="beard" type="button" title="Beard" aria-label="Beard">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 7c0 6 3.5 13 8 13s8-7 8-13"/>
+                    <path d="M7 10c2 2 3.5 2 5 2s3 0 5-2"/>
+                  </svg>
+                </button>
+                <button class="customizer-tab-btn" data-tab="hat" type="button" title="Hat" aria-label="Hat">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 18h20"/>
+                    <path d="M6 18V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v10"/>
+                    <path d="M6 13h12"/>
+                  </svg>
+                </button>
+              </nav>
+
+              <div class="customizer-tab-content">
+                <div id="tab-color" class="customizer-tab-pane">
+                  <div id="customizer-colors" class="colors-grid"></div>
+                </div>
+                <div id="tab-hair" class="customizer-tab-pane hidden">
+                  <div id="customizer-hair-options" class="options-grid"></div>
+                </div>
+                <div id="tab-eyes" class="customizer-tab-pane hidden">
+                  <div id="customizer-eyes-options" class="options-grid"></div>
+                </div>
+                <div id="tab-beard" class="customizer-tab-pane hidden">
+                  <div id="customizer-beard-options" class="options-grid"></div>
+                </div>
+                <div id="tab-hat" class="customizer-tab-pane hidden">
+                  <div id="customizer-hat-options" class="options-grid"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Divisória visual elegante -->
+            <div class="split-divider" aria-hidden="true"></div>
+
+            <!-- Lado Direito: Sala & Sobreviventes -->
+            <div class="split-col split-col--room">
+              <div class="split-header">
+                <h2 class="split-title">Room</h2>
+              </div>
+
+              <!-- Seletor Criar Sala / Entrar em Sala -->
+              <div class="room-mode-nav">
+                <button id="btn-tab-create" class="room-mode-btn is-active" type="button">Create Room</button>
+                <button id="btn-tab-join" class="room-mode-btn" type="button">Join Room</button>
+              </div>
+
+              <!-- Sub-painel: Criar Sala -->
+              <div id="staging-mode-create" class="room-mode-pane">
+                <div class="room-info-card">
+                  <span class="room-info-label">Room Code</span>
+                  <div class="room-code-display">
+                    <span id="staging-created-code" class="room-code-val">------</span>
+                    <button id="btn-copy-staging-code" class="btn btn--ghost btn--copy-code" type="button">
+                      Copy Link
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Sub-painel: Entrar em Sala (ou IP) -->
+              <div id="staging-mode-join" class="room-mode-pane hidden">
+                <div class="room-input-card">
+                  <span class="room-info-label">Room Code or IP</span>
+                  <div class="play-input-row">
+                    <input id="staging-input-code" type="text" maxlength="24" placeholder="e.g. K9X2 or IP" spellcheck="false" autocomplete="off" />
+                    <button id="btn-staging-connect-room" class="btn btn--secondary" type="button">
+                      Connect
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Lista de Jogadores Conectados na Sala -->
+              <div class="room-players-section">
+                <div class="room-players-header">
+                  <span class="room-players-title">Players in Room</span>
+                  <span id="staging-player-count" class="pill">0/8</span>
+                </div>
+                <ul id="staging-player-list" class="staging-player-list">
+                  <!-- Injetado dinamicamente via MainMenu -->
+                </ul>
+              </div>
+
+              <p id="staging-room-error" class="menu-error-msg" role="alert"></p>
+
+              <!-- Botão para Iniciar a Partida / Entrar no Jogo -->
+              <div class="room-action-bottom">
+                <button id="btn-start-match" class="btn btn--primary btn--xl btn--enter-arena" type="button">
+                  ENTER THE ARENA
+                </button>
+                <button id="btn-staging-back" class="btn btn--ghost btn-back-home" type="button">
+                  ← Back to Home
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modal de Configurações (Abre ao clicar na engrenagem) -->
+        <div id="modal-settings" class="menu-panel menu-panel--settings glass hidden" role="dialog" aria-label="Settings">
+          <div class="panel-header">
+            <h2 class="panel-title">Settings</h2>
+            <p class="panel-sub">Adjust audio, controls and display.</p>
+          </div>
+
+          <div class="settings-list">
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-title">Master Volume</span>
+                <span class="setting-desc">Global volume for all game sounds.</span>
+              </div>
+              <input id="setting-master-vol" class="setting-range" type="range" min="0" max="100" value="100" />
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-title">Sound Effects (SFX)</span>
+                <span class="setting-desc">Gunshots, explosions, hits and alarms.</span>
+              </div>
+              <input id="setting-sfx-vol" class="setting-range" type="range" min="0" max="100" value="100" />
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-title">Aim Sensitivity</span>
+                <span class="setting-desc">Mouse rotation speed when aiming.</span>
+              </div>
+              <input id="setting-mouse-sens" class="setting-range" type="range" min="20" max="250" value="100" />
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-title">Fullscreen Mode</span>
+                <span class="setting-desc">Toggle immersive fullscreen mode.</span>
+              </div>
+              <button id="btn-toggle-fullscreen" class="btn btn--ghost" type="button">
+                Fullscreen
+              </button>
+            </div>
+          </div>
+
+          <div class="panel-footer">
+            <button id="btn-close-settings" class="btn btn--primary" type="button">
+              Close
+            </button>
+          </div>
+        </div>
+
+        <!-- Botões Minimalistas no Rodapé (Engrenagem + Saiba mais sobre mim, 100% brancos) -->
+        <div class="bottom-dock" aria-label="Quick Actions">
+          <button id="btn-bottom-settings" class="bottom-icon-btn" type="button" title="Settings" aria-label="Settings">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+          <button id="btn-bottom-about" class="bottom-icon-btn" type="button" title="About the developer" aria-label="About the developer">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </button>
+        </div>
+      </section>
+
+      <!-- Tela de Morte / Game Over -->
+      <section id="death-screen" class="death-screen hidden" aria-labelledby="death-title">
+        <div class="death-screen__card glass">
+          <div class="death-screen__skull" aria-hidden="true">
+            <div class="dead-bean">
+              <div class="dead-bean__eye dead-bean__eye--l">✕</div>
+              <div class="dead-bean__eye dead-bean__eye--r">✕</div>
+            </div>
+            <div class="dead-bean__glow"></div>
+          </div>
+
+          <h2 id="death-title" class="death-title">YOU DIED</h2>
+          <p id="death-tagline" class="death-tagline">The zombie horde overtook you in the shadows...</p>
+
+          <div id="death-waiting-revive" class="death-waiting-revive hidden">
+            <span class="death-waiting-pulse">⚡</span> WAITING FOR A TEAMMATE TO USE DEFIBRILLATOR...
+          </div>
+
+          <div class="death-stats">
+            <div class="death-stat-box">
+              <span class="death-stat-label">Survival</span>
+              <span id="death-time" class="death-stat-value">00:00</span>
+            </div>
+            <div class="death-stat-box">
+              <span class="death-stat-label">Horde</span>
+              <span id="death-horde" class="death-stat-value">Horde 1</span>
+            </div>
+            <div class="death-stat-box">
+              <span class="death-stat-label">Coins</span>
+              <span id="death-coins" class="death-stat-value">🪙 0</span>
+            </div>
+          </div>
+
+          <div class="death-actions">
+            <button id="btn-restart" class="btn btn--danger btn--restart" type="button">
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+              </svg>
+              <span id="btn-restart-text" class="btn__text">RESTART MATCH</span>
+            </button>
+            <button id="btn-death-lobby" class="btn btn--ghost" type="button">
+              Back to Menu
+            </button>
+          </div>
+          <p id="death-tip" class="death-tip">Press <kbd>SPACE</kbd> or <kbd>ENTER</kbd> to restart match</p>
+        </div>
+      </section>
+
+      <!-- Tela de Vitória: O JOGO ACABOU / RESGATADOS PELO HELICÓPTERO -->
+      <section id="victory-screen" class="victory-screen hidden" aria-labelledby="victory-title">
+        <div class="victory-screen__backdrop"></div>
+        <div class="victory-screen__card glass">
+          <div class="victory-screen__badge" aria-hidden="true">
+            <span class="victory-badge__icon">🚁</span>
+            <div class="victory-badge__glow"></div>
+            <div class="victory-badge__ring"></div>
+          </div>
+
+          <span class="victory-tagline">MISSÃO CUMPRIDA · EVACUAÇÃO CONCLUÍDA</span>
+          <h2 id="victory-title" class="victory-title">O JOGO ACABOU!</h2>
+          <p id="victory-desc" class="victory-desc">Vocês alcançaram o helicóptero de resgate e sobreviveram ao apocalipse zumbi!</p>
+
+          <div class="victory-stats">
+            <div class="victory-stat-box">
+              <span class="victory-stat-label">Sobrevivência</span>
+              <span id="victory-time" class="victory-stat-value">00:00</span>
+            </div>
+            <div class="victory-stat-box">
+              <span class="victory-stat-label">Horda</span>
+              <span id="victory-horde" class="victory-stat-value">Horda 5</span>
+            </div>
+            <div class="victory-stat-box">
+              <span class="victory-stat-label">Moedas</span>
+              <span id="victory-coins" class="victory-stat-value">🪙 0</span>
+            </div>
+          </div>
+
+          <div class="victory-actions">
+            <button id="btn-victory-restart" class="btn btn--primary btn--victory" type="button">
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+              </svg>
+              <span class="btn__text">JOGAR NOVAMENTE</span>
+            </button>
+            <button id="btn-victory-lobby" class="btn btn--ghost" type="button">
+              Voltar ao Menu
+            </button>
+          </div>
+          <p class="victory-tip">Pressione <kbd>ESPAÇO</kbd> ou <kbd>ENTER</kbd> para reiniciar a partida</p>
+        </div>
+      </section>
+
+      <!-- Modal do Livro Antigo de Sobrevivência (Diário Manuscrito da Cabana) -->
+      <section id="book-modal" class="book-modal hidden" aria-modal="true" role="dialog" aria-label="Vintage Survival Diary">
+        <div class="book-modal__backdrop" id="book-modal-backdrop"></div>
+        <div class="book-wrapper">
+          <!-- Livro Antigo Aberto com Encadernação de Couro -->
+          <div class="antique-book">
+            <!-- Capa Externa de Couro e Cantoneiras Metálicas -->
+            <div class="book-leather-cover"></div>
+            <div class="book-corner corner-tl"></div>
+            <div class="book-corner corner-tr"></div>
+            <div class="book-corner corner-bl"></div>
+            <div class="book-corner corner-br"></div>
+
+            <!-- Lombada / Costura Central e Fita Marcadora de Cetim Vermelho -->
+            <div class="book-spine-seam"></div>
+            <div class="book-ribbon-marker"></div>
+
+            <!-- Botão de Fechar Antigo (Lacre de Cera Vermelho) -->
+            <button id="btn-close-book" class="book-wax-seal-close" type="button" aria-label="Close diary" title="Close Book [ESC]">
+              <span>✕</span>
+            </button>
+
+            <!-- Spread de Páginas (Página Esquerda e Página Direita) -->
+            <div class="book-spread" id="book-spread-container">
+              <!-- Página Esquerda -->
+              <article class="parchment-page page-left" id="book-left-page">
+                <!-- Conteúdo manuscrito gerado dinamicamente -->
+              </article>
+
+              <!-- Vinco Central com Sombra de Profundidade da Encadernação -->
+              <div class="page-crease"></div>
+
+              <!-- Página Direita -->
+              <article class="parchment-page page-right" id="book-right-page">
+                <!-- Conteúdo manuscrito gerado dinamicamente -->
+              </article>
+            </div>
+
+            <!-- Navegação Lateral (Folhear Páginas) -->
+            <button id="btn-book-prev" class="book-turn-btn turn-left" type="button" aria-label="Previous page" title="Previous Page [←]">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 18 9 12 15 6"></polyline>
+              </svg>
+            </button>
+
+            <button id="btn-book-next" class="book-turn-btn turn-right" type="button" aria-label="Next page" title="Next Page [→]">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            </button>
+
+            <!-- Rodapé Rústico com Marcador de Folhas e Instrução -->
+            <footer class="book-footer-vintage">
+              <span class="vintage-key-hint">Hint: Use [← / →] or [A / D] keys to flip pages</span>
+              <span id="book-page-indicator" class="vintage-page-indicator">Pages I & II of VIII</span>
+            </footer>
+          </div>
+        </div>
+      </section>
+
+      <!-- Modal de Alerta Inicial de Entrada no Mundo -->
+      <section id="welcome-modal" class="welcome-modal hidden" aria-modal="true" role="dialog" aria-label="Survival Warning">
+        <div class="welcome-modal__backdrop" id="welcome-modal-backdrop"></div>
+        <div class="welcome-modal__card glass">
+          <div class="welcome-modal__header">
+            <span class="welcome-modal__icon">📖</span>
+            <span class="welcome-modal__tag">SURVIVAL BRIEFING</span>
+          </div>
+          <p class="welcome-modal__message">
+            A crazy apocalypse is approaching. Read the book left on the table to understand how to survive.
+          </p>
+          <div class="welcome-modal__actions">
+            <button id="btn-welcome-ok" class="btn btn--primary welcome-modal__btn" type="button">
+              Ok
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
