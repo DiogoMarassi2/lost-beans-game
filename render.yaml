@@ -1,0 +1,11 @@
+# Servidor de jogo (Colyseus / WebSocket) no plano gratuito do Render.
+# Render → New → Blueprint → selecione este repositório.
+services:
+  - type: web
+    name: lost-beans-server
+    runtime: docker
+    plan: free
+    region: virginia
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true

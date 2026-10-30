@@ -1,11 +1,7 @@
 {
-  "builds": [{
-    "src": "dist/**",
-    "use": "@vercel/static-build",
-    "config": { "distDir": "dist" }
-  }],
-  "routes": [{
-    "src": "/(.*)",
-    "dest": "/index.html"
-  }]
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build -w @dark-beans/client",
+  "outputDirectory": "packages/client/dist"
 }

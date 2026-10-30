@@ -241,6 +241,18 @@ export class NetworkManager {
     this.code = NetworkManager.getRoomFromUrl() || "";
     this.endpoint = NetworkManager.resolveEndpoint();
     this.client = new Client(this.endpoint);
+    this.wakeServer();
+  }
+
+  /**
+   * Hospedagens gratuitas (ex.: Render) desligam o servidor quando ninguém joga.
+   * Uma requisição logo ao abrir a página já começa a ligá-lo enquanto o jogador está no menu.
+   */
+  private wakeServer(): void {
+    const httpUrl = this.endpoint.replace(/^ws/, "http");
+    fetch(`${httpUrl}/health`).catch(() => {
+      // Silencioso: a conexão real à sala mostra o erro, se houver
+    });
   }
 
   /** Lê `?room=` da URL se existir */
