@@ -16,7 +16,7 @@ import {
   HAT_OPTIONS,
 } from "../entities/CharacterCosmetics";
 import { CharacterPreview } from "./CharacterPreview";
-import type { NetworkManager, NetArenaState, NetPlayer } from "../network/NetworkManager";
+import { NetworkManager, type NetArenaState, type NetPlayer } from "../network/NetworkManager";
 
 const NAME_KEY = "lost-beans:name";
 const LEGACY_NAME_KEY = "dark-beans:name";
@@ -49,7 +49,6 @@ const DEFAULT_SETTINGS: GameSettings = {
  * 2) Tela Dividida ao clicar em JOGAR:
  *    - Esquerda: Criação de Personagem com nome e preview 3D interativo
  *    - Direita: Gerenciamento da Sala (Criar sala ou Inserir código/IP + Lista de jogadores em tempo real)
- * 3) Rodapé Minimalista: Botão de configurações (ícone engrenagem todo branco) + Saiba mais sobre mim (ícone todo branco)
  */
 export class MainMenu {
   private readonly root = document.getElementById("main-menu")!;
@@ -82,9 +81,7 @@ export class MainMenu {
   private readonly btnStartMatch = document.getElementById("btn-start-match") as HTMLButtonElement;
   private readonly btnStagingBack = document.getElementById("btn-staging-back") as HTMLButtonElement;
 
-  // Rodapé Minimalista e Configurações
-  private readonly btnBottomSettings = document.getElementById("btn-bottom-settings") as HTMLButtonElement;
-  private readonly btnBottomAbout = document.getElementById("btn-bottom-about") as HTMLButtonElement;
+  // Configurações
   private readonly btnCloseSettings = document.getElementById("btn-close-settings") as HTMLButtonElement;
   private readonly sliderMaster = document.getElementById("setting-master-vol") as HTMLInputElement;
   private readonly sliderSfx = document.getElementById("setting-sfx-vol") as HTMLInputElement;
@@ -99,6 +96,8 @@ export class MainMenu {
 
   private currentRoomCode: string = "";
   private isConnecting: boolean = false;
+  /** Aba ativa do gerenciamento de sala (na aba "join" só entra na arena quem conectou a uma sala existente). */
+  private roomTab: "create" | "join" = "create";
 
   constructor(
     network: NetworkManager,
@@ -213,7 +212,7 @@ export class MainMenu {
         if (this.stagingInputCode) {
           this.stagingInputCode.value = initialInvitedRoom;
         }
-        await this.connectToRoom(initialInvitedRoom);
+        await this.connectToRoom(initialInvitedRoom, "join");
       } else {
         // Modo padrão: Criar Sala
         this.selectRoomTab("create");
@@ -401,6 +400,13 @@ export class MainMenu {
     // Alternar para Entrar em Sala
     this.btnTabJoin?.addEventListener("click", () => {
       this.selectRoomTab("join");
+      // Sai da sala criada automaticamente: a lista só mostra jogadores após conectar a outra sala
+      if (this.network.sessionId) {
+        this.network.leave();
+      }
+      this.currentRoomCode = "";
+      this.clearPlayerList();
+      this.updateStartButton();
       this.stagingInputCode?.focus();
     });
 
@@ -434,7 +440,7 @@ export class MainMenu {
         this.stagingInputCode.focus();
         return;
       }
-      await this.connectToRoom(typed);
+      await this.connectToRoom(typed, "join");
     };
 
     this.btnStagingConnect?.addEventListener("click", handleJoinAction);
@@ -447,6 +453,11 @@ export class MainMenu {
 
     // Botão ENTRAR NA ARENA (Começar partida)
     this.btnStartMatch?.addEventListener("click", async () => {
+      if (this.roomTab === "join" && !this.network.sessionId) {
+        this.stagingRoomError.textContent = "Connect to an existing room first.";
+        this.updateStartButton();
+        return;
+      }
       if (!this.network.sessionId) {
         const code = this.currentRoomCode || generateRoomCode();
         await this.connectToRoom(code);
@@ -471,6 +482,7 @@ export class MainMenu {
   }
 
   private selectRoomTab(tab: "create" | "join"): void {
+    this.roomTab = tab;
     if (tab === "create") {
       this.btnTabCreate?.classList.add("is-active");
       this.btnTabJoin?.classList.remove("is-active");
@@ -483,49 +495,61 @@ export class MainMenu {
       this.paneCreate?.classList.add("hidden");
     }
     this.stagingRoomError.textContent = "";
+    this.updateStartButton();
   }
 
   /**
    * Conecta à sala no servidor e passa a monitorar os jogadores em tempo real
    */
-  private async connectToRoom(code: string): Promise<void> {
+  private async connectToRoom(code: string, mode: "create" | "join" = "create"): Promise<void> {
     if (this.isConnecting) return;
+    // Já está nesta sala: nada a fazer (evita entrar duas vezes)
+    if (this.network.sessionId && this.network.code === code) {
+      this.stagingRoomError.textContent = "";
+      return;
+    }
     this.isConnecting = true;
     this.stagingRoomError.textContent = "";
     this.setBusy(true);
 
     try {
       const name = this.savePlayerName();
+      // A troca de sala é feita pelo NetworkManager: só sai da atual se a nova conexão der certo
+      await this.network.connect(name, code, this.appearance, mode);
       this.currentRoomCode = code;
-
-      // Se já estava conectado em outra sala, sai da anterior
-      if (this.network.sessionId && this.network.code !== code) {
-        this.network.leave();
-      }
-
-      await this.network.connect(name, code, this.appearance);
-
-      if (this.stagingCreatedCode) {
-        this.stagingCreatedCode.textContent = this.network.code;
-      }
-
-      // Atualiza lista imediatamente
-      if (this.network.state) {
-        this.onNetworkStateChange(this.network.state);
-      }
     } catch (err) {
+      // Só falhas reais de conexão mostram o erro (não erros de atualização da interface)
       console.error(err);
-      this.stagingRoomError.textContent = "Could not connect to room. Check code or IP.";
+      this.stagingRoomError.textContent = NetworkManager.isRoomNotFoundError(err)
+        ? "This room doesn't exist."
+        : "Could not connect to room. Check code or IP.";
+      return;
     } finally {
       this.isConnecting = false;
       this.setBusy(false);
     }
+
+    if (this.stagingCreatedCode) {
+      this.stagingCreatedCode.textContent = this.network.code;
+    }
+
+    // Atualiza lista imediatamente (o estado completo pode ainda não ter chegado do servidor)
+    if (this.network.state) {
+      this.onNetworkStateChange(this.network.state);
+    }
   }
 
   private setBusy(busy: boolean): void {
-    if (this.btnStartMatch) this.btnStartMatch.disabled = busy;
     if (this.btnStagingConnect) this.btnStagingConnect.disabled = busy;
     if (this.btnTabCreate) this.btnTabCreate.disabled = busy;
+    this.updateStartButton();
+  }
+
+  /** "Enter the Arena" só fica ativo fora de conexões em andamento e, na aba Join, após conectar a uma sala. */
+  private updateStartButton(): void {
+    if (!this.btnStartMatch) return;
+    const needsRoom = this.roomTab === "join" && !this.network.sessionId;
+    this.btnStartMatch.disabled = this.isConnecting || needsRoom;
   }
 
   /**
@@ -533,6 +557,8 @@ export class MainMenu {
    */
   onNetworkStateChange(state: NetArenaState): void {
     if (!this.stagingPlayerList || !this.stagingPlayerCount) return;
+    // Logo após entrar na sala, o primeiro estado ainda não foi sincronizado
+    if (!state.players) return;
 
     this.stagingPlayerList.innerHTML = "";
     const players: { id: string; player: NetPlayer }[] = [];
@@ -611,16 +637,6 @@ export class MainMenu {
    * Configura o rodapé minimalista e o modal de configurações
    */
   private setupSettingsAndDock(): void {
-    // Engrenagem minimalista: abre/fecha modal de configurações
-    this.btnBottomSettings?.addEventListener("click", () => {
-      this.modalSettings.classList.toggle("hidden");
-    });
-
-    // Saiba mais sobre mim: botão minimalista todo branco (não precisa funcionar ainda)
-    this.btnBottomAbout?.addEventListener("click", () => {
-      console.log("[Lost Beans] About me coming soon.");
-    });
-
     // Fechar modal de configurações
     this.btnCloseSettings?.addEventListener("click", () => {
       this.modalSettings.classList.add("hidden");

@@ -8,11 +8,18 @@ import {
   finiteOr,
   getActiveDoorColliders,
   getAmmoCost,
+  getArmorMaxForLevel,
+  getArmorLevel,
+  getArmorRepairCost,
+  getArmorUpgradeCost,
   GUN_TIERS,
   HELICOPTER_COUNTDOWN_SECONDS,
   HELICOPTER_RESCUE_POS,
   HELICOPTER_SKY_ALTITUDE,
-  ITEM_SPAWNS,
+  findRandomItemSpot,
+  RANDOM_AMMO_COUNT,
+  RANDOM_COIN_COUNT,
+  RANDOM_ITEM_MIN_SPACING,
   KNIFE_TIERS,
   MAGAZINE_SIZE,
   MAX_GUN_LEVEL,
@@ -25,6 +32,7 @@ import {
   resolveStatic,
   sanitizeRoomCode,
   SHOP_POS,
+  START_CABIN_DOOR_ID,
   START_CABIN_X,
   START_CABIN_Z,
   TICK_MS,
@@ -60,17 +68,8 @@ export class ArenaRoom extends Room<ArenaState> {
     this.state.code = code;
     void this.setMetadata({ code });
 
-    // Spawna caixas de munição, armas e bandagens colecionáveis no mapa
-    for (const spawn of ITEM_SPAWNS) {
-      const box = new AmmoBoxSchema();
-      box.id = spawn.id;
-      box.kind = spawn.kind;
-      box.x = spawn.x;
-      box.y = spawn.y;
-      box.z = spawn.z;
-      box.active = true;
-      this.state.ammoBoxes.set(box.id, box);
-    }
+    // Espalha munição e moedas em locais aleatórios do mapa
+    this.spawnRandomMapItems();
 
     // Posição inicial do helicóptero de resgate no céu
     this.state.helicopterX = HELICOPTER_RESCUE_POS.x;
@@ -225,16 +224,27 @@ export class ArenaRoom extends Room<ArenaState> {
           }
         }
       }
-      // 5) Armadura (Upgrade permanente: 4 ➔ 6 ➔ 8 ➔ 10 ➔ 12 ➔ 14)
-      else if (item === "armor") {
-        const cost = 5;
-        if (p.maxArmor < 14) {
-          if (p.coins >= cost) {
-            p.coins -= cost;
-            p.maxArmor = Math.min(14, (p.maxArmor || 4) + 2);
-            p.armor = p.maxArmor; // Recarrega totalmente os pontos de armadura
-            console.log(`[ArenaRoom] 🛡️ ${p.name} melhorou a Armadura para ${p.maxArmor} Pts!`);
-          }
+      // 5) Upgrade de Armadura (permanente: 4 ➔ 6 ➔ 8 ➔ 10 ➔ 12 ➔ 14). Preço sobe a cada nível.
+      //    Não regenera a armadura: apenas adiciona os +2 pontos novos.
+      else if (item === "armor_upgrade" || item === "armor") {
+        const cost = getArmorUpgradeCost(p.maxArmor);
+        if (cost !== null && p.coins >= cost) {
+          p.coins -= cost;
+          const newLevel = getArmorLevel(p.maxArmor) + 1;
+          const newMax = getArmorMaxForLevel(newLevel);
+          const gained = newMax - (p.maxArmor || 4);
+          p.maxArmor = newMax;
+          p.armor = Math.min(p.maxArmor, (p.armor || 0) + gained);
+          console.log(`[ArenaRoom] 🛡️ ${p.name} melhorou a Armadura para Nv. ${newLevel} (${p.maxArmor} Pts) por ${cost} moedas!`);
+        }
+      }
+      // 5.1) Regenerar Armadura (recarrega todos os pontos). Preço sobe com o nível da armadura.
+      else if (item === "armor_repair") {
+        const cost = getArmorRepairCost(p.maxArmor);
+        if (p.armor < p.maxArmor && p.coins >= cost) {
+          p.coins -= cost;
+          p.armor = p.maxArmor;
+          console.log(`[ArenaRoom] 🛡️ ${p.name} regenerou a Armadura (${p.maxArmor} Pts) por ${cost} moedas!`);
         }
       }
       // 5) Munição (Comprada apenas na loja: +1 pente na reserva; preço fixo em 1 moeda)
@@ -368,6 +378,11 @@ export class ArenaRoom extends Room<ArenaState> {
 
       targetDoor.isOpen = !targetDoor.isOpen;
       console.log(`[ArenaRoom] ${p.name} ${targetDoor.isOpen ? "ABRIU" : "FECHOU"} a porta '${targetDoor.name}'`);
+
+      // Abrir a porta da casinha inicial pela primeira vez inicia a contagem para a 1ª Horda
+      if (targetDoor.isOpen && targetDoor.id === START_CABIN_DOOR_ID) {
+        this.wave.startHordeClock(this.state);
+      }
     });
 
     // ─── Respawn / Reinício do jogo após morte ─────────────────────────
@@ -438,7 +453,8 @@ export class ArenaRoom extends Room<ArenaState> {
         });
       };
 
-      if (livingCount > 0) {
+      // Após a vitória (todos vivos no helicóptero), "Jogar novamente" reinicia a partida inteira
+      if (livingCount > 0 && !this.state.gameWon) {
         // Cooperativo: O corpo do personagem deve permanecer caído até alguém reviver ou o jogo reiniciar
         console.log(`[ArenaRoom] Respawn individual bloqueado para ${deadPlayer.name}: aliados ainda vivos! Corpo permanece caído até reviver.`);
         return;
@@ -467,16 +483,7 @@ export class ArenaRoom extends Room<ArenaState> {
 
       // 5) Reseta todas as caixas de munição e coletáveis no mapa
       this.state.ammoBoxes.clear();
-      for (const spawn of ITEM_SPAWNS) {
-        const box = new AmmoBoxSchema();
-        box.id = spawn.id;
-        box.kind = spawn.kind;
-        box.x = spawn.x;
-        box.y = spawn.y;
-        box.z = spawn.z;
-        box.active = true;
-        this.state.ammoBoxes.set(box.id, box);
-      }
+      this.spawnRandomMapItems();
 
       // 6) Reseta helicóptero de resgate e status de vitória
       this.state.flareTriggered = false;
@@ -853,6 +860,28 @@ export class ArenaRoom extends Room<ArenaState> {
         }
       }
     }
+  }
+
+  /** Sorteia novas posições para todas as caixas de munição e moedas do mapa. */
+  private spawnRandomMapItems(): void {
+    const placed: { x: number; z: number }[] = [];
+    const spawnKind = (kind: "ammo" | "coin", count: number) => {
+      for (let i = 0; i < count; i++) {
+        const spot = findRandomItemSpot(placed, RANDOM_ITEM_MIN_SPACING);
+        if (!spot) continue;
+        placed.push(spot);
+        const box = new AmmoBoxSchema();
+        box.id = `item_rand_${kind}_${i}`;
+        box.kind = kind;
+        box.x = spot.x;
+        box.y = spot.y;
+        box.z = spot.z;
+        box.active = true;
+        this.state.ammoBoxes.set(box.id, box);
+      }
+    };
+    spawnKind("ammo", RANDOM_AMMO_COUNT);
+    spawnKind("coin", RANDOM_COIN_COUNT);
   }
 
   private sanitizeName(raw: unknown, index: number): string {

@@ -3,6 +3,7 @@ import {
   C4_DISTRACTION_RADIUS,
   ENEMY_CONFIGS,
   getRoofImpactY,
+  HORDE_1_DELAY_AFTER_CABIN_DOOR_SECONDS,
   HORDE_1_TRIGGER_REAL_SECONDS,
   HORDE_2_TRIGGER_REAL_SECONDS,
   HORDE_3_TRIGGER_REAL_SECONDS,
@@ -103,6 +104,8 @@ export class WaveSystem {
   private horde12Triggered = false;
   private horde13Triggered = false;
   private hordeAlertTimer = 0;
+  /** O relógio das hordas só começa a correr quando a porta da casinha inicial é aberta. */
+  private hordeClockStarted = false;
 
   /** Fila de levas e reforços escalonados (+15s) para hordas fluidas e dinâmicas */
   private pendingWaves: PendingHordeWave[] = [];
@@ -115,6 +118,12 @@ export class WaveSystem {
 
   /** Distância mínima (em metros) para garantir que o zumbi nasça fora da visão/câmera do jogador. */
   static readonly MIN_OFFSCREEN_DIST = 22.0;
+  /** Distância além da qual um zumbi não-caçador perde o rastro do jogador. */
+  static readonly LOSE_TRACK_DIST = 22.0;
+  /** Perseguição garantida (s) para zumbis de horda que podem esquecer, já que nascem fora da tela (≥22m). */
+  static readonly HORDE_HUNT_GRACE_SECONDS = 20.0;
+  /** Ao chegar a esta distância do alvo, o zumbi de horda encerra a perseguição garantida. */
+  static readonly HORDE_HUNT_ENGAGE_DIST = 15.0;
 
   /**
    * Verifica se um chefe específico ainda está vivo na arena.
@@ -147,7 +156,10 @@ export class WaveSystem {
     }
 
     // 2) Relógio do Jogo Acelerado e Disparo das Hordas Oficiais
-    state.gameTime += dt;
+    // (congelado até alguém abrir a porta da casinha inicial)
+    if (this.hordeClockStarted) {
+      state.gameTime += dt;
+    }
 
       // Desativa o alerta de horda após 4.2 segundos do disparo
       if (state.hordeAlert) {
@@ -185,7 +197,7 @@ export class WaveSystem {
         }
       }
 
-      // 1ª Horda Oficial: dispara às 01:00 (10 segundos reais)
+      // 1ª Horda Oficial: dispara 60s após a porta da casinha inicial ser aberta
       if (state.gameTime >= HORDE_1_TRIGGER_REAL_SECONDS && !this.horde1Triggered) {
         this.horde1Triggered = true;
         this.hordeAlertTimer = 0;
@@ -601,7 +613,10 @@ export class WaveSystem {
       // ─── 3.2) Modo: PERSEGUIÇÃO AGRESSIVA (Aggro ativo) ─────────────────
       if (zombie.isAggro && targetPos) {
         // Se o sobrevivente despistou o zumbi e fugiu para muito longe (>22m), e não houver C4 chamando atenção e não for caçador direto, perde o rastro!
-        if (!activeC4 && !zombie.isHunter && dist > 22.0) {
+        if (zombie.huntGraceTimer > 0) {
+          zombie.huntGraceTimer = dist <= WaveSystem.HORDE_HUNT_ENGAGE_DIST ? 0 : zombie.huntGraceTimer - dt;
+        }
+        if (!activeC4 && !zombie.isHunter && zombie.huntGraceTimer <= 0 && dist > WaveSystem.LOSE_TRACK_DIST) {
           zombie.isAggro = false;
           zombie.aiMode = "wandering";
           zombie.anchorX = zombie.x;
@@ -1710,7 +1725,10 @@ export class WaveSystem {
         pt = this.findOffscreenPoint(state, preferredAngle);
       }
       const zombie = this.spawnEnemy(state, type, pt.x, pt.z);
-      zombie.isHunter = true;
+      const isBoss = type === "boss" || type === "spider_boss" || type === "werewolf_boss" || type === "sack_boss";
+      // Chefes sempre caçam; 50% dos zumbis comuns da horda podem esquecer o jogador se ele fugir para longe
+      zombie.isHunter = isBoss || Math.random() < 0.5;
+      zombie.huntGraceTimer = zombie.isHunter ? 0 : WaveSystem.HORDE_HUNT_GRACE_SECONDS;
       zombie.isAggro = true;
       zombie.aiMode = "chasing";
     });
@@ -2348,6 +2366,23 @@ export class WaveSystem {
   }
 
   /**
+   * Inicia o relógio das hordas (chamado quando a porta da casinha inicial é aberta).
+   * Avança o relógio para exatamente HORDE_1_DELAY_AFTER_CABIN_DOOR_SECONDS antes da 1ª Horda,
+   * preservando os intervalos de todas as hordas seguintes.
+   */
+  startHordeClock(state: ArenaState): void {
+    if (this.hordeClockStarted) return;
+    this.hordeClockStarted = true;
+    state.gameTime = Math.max(
+      state.gameTime,
+      HORDE_1_TRIGGER_REAL_SECONDS - HORDE_1_DELAY_AFTER_CABIN_DOOR_SECONDS,
+    );
+    console.log(
+      `[WaveSystem] 🚪 Porta da casinha aberta! Horda 1 em ${HORDE_1_DELAY_AFTER_CABIN_DOOR_SECONDS}s.`,
+    );
+  }
+
+  /**
    * Reseta completamente o sistema de hordas para o estado inicial da partida:
    * - Relógio do jogo volta a 0 (00:00)
    * - Hordas voltam a 0 (estado de preparação para Horda 1)
@@ -2356,6 +2391,7 @@ export class WaveSystem {
    * - Recria a população inicial calma de zumbis patrulhando
    */
   resetMatch(state: ArenaState): void {
+    this.hordeClockStarted = false;
     state.gameTime = 0;
     state.currentHorde = 0;
     state.hordeState = "preparing";
@@ -2398,6 +2434,8 @@ export class WaveSystem {
    * Se hordeNumber === 5 e immediateBoss === true, antecipa a chegada do Chefe para 1.2 segundos.
    */
   debugTriggerHorde(state: ArenaState, hordeNumber = 5, immediateBoss = false): void {
+    // Garante que as levas agendadas avancem mesmo sem abrir a porta
+    this.hordeClockStarted = true;
     console.log(`[WaveSystem] 🛠️ DEBUG: Forçando disparo da Horda ${hordeNumber} (immediateBoss: ${immediateBoss})`);
     if (hordeNumber === 99) {
       const pt = this.findBossOffscreenPoint(state);

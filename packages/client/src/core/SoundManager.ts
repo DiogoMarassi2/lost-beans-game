@@ -269,6 +269,58 @@ export class SoundManager {
     osc.stop(now + 0.19);
   }
 
+  /** Impacto absorvido pela armadura: "clank" metálico curto + baque abafado */
+  playArmorHit(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const dest = this.masterGain ?? ctx.destination;
+
+    // Ressonância metálica (parciais inarmônicas como placa de aço sendo atingida)
+    const partials = [820, 1370, 2110];
+    partials.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(freq, now);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.92, now + 0.22);
+      gain.gain.setValueAtTime(0.12 / (i + 1), now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22 - i * 0.04);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now);
+      osc.stop(now + 0.23);
+    });
+
+    // Transiente de ruído filtrado (o "tchak" do impacto)
+    const noise = this.createNoiseSource(ctx);
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(3000, now);
+    filter.Q.setValueAtTime(1.2, now);
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(0.35, now);
+    nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+    noise.connect(filter);
+    filter.connect(nGain);
+    nGain.connect(dest);
+    noise.start(now);
+    noise.stop(now + 0.06);
+
+    // Baque grave abafado (o golpe contra o colete)
+    const thump = ctx.createOscillator();
+    const tGain = ctx.createGain();
+    thump.type = "sine";
+    thump.frequency.setValueAtTime(180, now);
+    thump.frequency.exponentialRampToValueAtTime(70, now + 0.1);
+    tGain.gain.setValueAtTime(0.3, now);
+    tGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    thump.connect(tGain);
+    tGain.connect(dest);
+    thump.start(now);
+    thump.stop(now + 0.13);
+  }
+
   /** Som dramático de morte do jogador (impacto pesado + acorde sombrio em queda) */
   playDeath(): void {
     const ctx = this.ensureContext();

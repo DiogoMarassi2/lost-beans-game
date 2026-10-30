@@ -345,3 +345,39 @@ export const getRoofImpactY = (x: number, z: number): number | null => {
   }
   return null;
 };
+
+/**
+ * Sorteia uma posição aleatória no chão (y = 0) onde um item coletável pode aparecer:
+ * dentro dos limites do mapa, fora de paredes/obstáculos, fora de rampas e longe de `avoid`.
+ * Retorna null se não encontrar um ponto válido após `maxTries` tentativas.
+ */
+export const findRandomItemSpot = (
+  avoid: readonly Vec2[] = [],
+  minSpacing = 0,
+  maxTries = 60,
+): Vec3 | null => {
+  const margin = 2.0;
+  const clearance = 0.7;
+  for (let i = 0; i < maxTries; i++) {
+    const x = MAP_MIN_X + margin + Math.random() * (MAP_MAX_X - MAP_MIN_X - margin * 2);
+    const z = MAP_MIN_Z + margin + Math.random() * (MAP_MAX_Z - MAP_MIN_Z - margin * 2);
+
+    // Fora de rampas/pisos elevados
+    if (calculateElevation(x, z, 0) !== 0) continue;
+
+    // Fora da área sob a casa abandonada (térreo vedado) e do balcão da loja
+    const roof = getCoveringRoof(x, z, 0);
+    if (roof && (roof.name === "abandoned_house" || roof.name === "shop")) continue;
+
+    // Fora de paredes, obstáculos e colisores (se o resolveStatic empurrar, o ponto é inválido)
+    const probe = { x, y: 0, z };
+    resolveStatic(probe, clearance);
+    if (Math.abs(probe.x - x) > 1e-4 || Math.abs(probe.z - z) > 1e-4) continue;
+
+    // Longe dos outros itens
+    if (minSpacing > 0 && avoid.some((a) => Math.hypot(a.x - x, a.z - z) < minSpacing)) continue;
+
+    return { x, y: 0.1, z };
+  }
+  return null;
+};

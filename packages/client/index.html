@@ -60,15 +60,10 @@
             </div>
           </div>
 
+          <!-- Código da sala (para amigos entrarem pela aba Join Room) -->
           <div class="room-card glass">
-            <div class="room-card__info">
-              <span class="label">Room</span>
-              <span id="hud-room-code" class="room-card__code">-----</span>
-            </div>
-            <button id="btn-copy-link" class="btn btn--ghost" type="button">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z"/></svg>
-              Copy Link
-            </button>
+            <span class="label">Room</span>
+            <span id="hud-room-code" class="room-card__code">-----</span>
           </div>
         </header>
 
@@ -286,21 +281,28 @@
                   </button>
                 </article>
 
-                <!-- 6) Armadura (Colete Balístico) -->
-                <article class="shop-card" data-buy="armor">
+                <!-- 6) Armadura (Colete Balístico): Upgrade de nível + Regenerar pontos -->
+                <article class="shop-card shop-card--armor">
                   <div class="shop-card__icon-box">
                     <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm0 2.18l6 2.25v4.66c0 4.14-2.73 8.01-6 9.07-3.27-1.06-6-4.93-6-9.07V6.43l6-2.25z"/></svg>
                   </div>
                   <div class="shop-card__info">
                     <div class="shop-card__title-row">
                       <span class="shop-card__title">Body Armor</span>
-                      <span id="shop-armor-status" class="shop-badge">5 Pts</span>
+                      <span id="shop-armor-status" class="shop-badge">4/4 Pts</span>
                     </div>
-                    <span id="shop-armor-stat" class="shop-card__stat">Gray Bar (Slot 3)</span>
+                    <span id="shop-armor-stat" class="shop-card__stat">Lvl. 1</span>
                   </div>
-                  <button id="btn-buy-armor" class="btn-shop-buy" type="button" data-item="armor">
-                    <span id="btn-buy-armor-text">🪙 5</span>
-                  </button>
+                  <div class="shop-card__actions">
+                    <button id="btn-buy-armor" class="btn-shop-buy btn-shop-buy--split" type="button" data-item="armor_upgrade" title="Upgrade armor level (+2 max Pts)">
+                      <span class="btn-shop-buy__label">⬆ Upgrade</span>
+                      <span id="btn-buy-armor-text">🪙 20</span>
+                    </button>
+                    <button id="btn-repair-armor" class="btn-shop-buy btn-shop-buy--split btn-shop-buy--repair" type="button" data-item="armor_repair" title="Restore all armor points">
+                      <span class="btn-shop-buy__label">🔧 Repair</span>
+                      <span id="btn-repair-armor-text">🪙 5</span>
+                    </button>
+                  </div>
                 </article>
 
                 <!-- 7) Desfibrilador (Dispositivo Médico para Reviver Amigo) -->
@@ -579,21 +581,6 @@
           </div>
         </div>
 
-        <!-- Botões Minimalistas no Rodapé (Engrenagem + Saiba mais sobre mim, 100% brancos) -->
-        <div class="bottom-dock" aria-label="Quick Actions">
-          <button id="btn-bottom-settings" class="bottom-icon-btn" type="button" title="Settings" aria-label="Settings">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>
-          </button>
-          <button id="btn-bottom-about" class="bottom-icon-btn" type="button" title="About the developer" aria-label="About the developer">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-              <circle cx="12" cy="7" r="4"/>
-            </svg>
-          </button>
-        </div>
       </section>
 
       <!-- Tela de Morte / Game Over -->

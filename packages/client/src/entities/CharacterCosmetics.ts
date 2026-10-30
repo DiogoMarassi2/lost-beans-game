@@ -56,580 +56,463 @@ export const HAT_OPTIONS: { id: HatType; name: string }[] = [
 export const DEFAULT_HAIR_COLOR = "#1c1917"; // Castanho escuro / espresso profundo
 export const DEFAULT_HAIR_HIGHLIGHT_COLOR = "#282321"; // Tom iluminado para mechas e contornos
 
+// ─── Superfície da cabeça do feijão ─────────────────────────────────────────
+// Cabelos e barbas são UMA malha contínua cada, moldada como uma "capa" sobre a cápsula
+// do corpo (raio 0.5, cúpula centrada em y = 1.1). A forma de cada estilo vem de um campo
+// de espessura h(s, φ): onde h > 0 há fios; onde h < 0 a capa fica escondida sob a pele.
+//   s = distância ao longo da superfície a partir do topo da cabeça (metros)
+//   φ = ângulo em torno do eixo vertical (0 = frente/+Z, +π/2 = lado +X)
+const HEAD_R = 0.5;
+const HEAD_CENTER_Y = 1.1;
+const HEAD_EQUATOR_S = (Math.PI * HEAD_R) / 2;
+/** Profundidade sob a pele usada para esconder as partes da capa sem fios
+ *  (folga para as faces planas da cápsula de baixa resolução do corpo). */
+const TUCK = -0.05;
+
+const smooth01 = (x: number): number => {
+  const t = Math.max(0, Math.min(1, x));
+  return t * t * (3 - 2 * t);
+};
+const smoothstep = (a: number, b: number, x: number): number => smooth01((x - a) / (b - a));
+
+/** Ponto e normal da superfície da cápsula na coordenada (s, φ). */
+function headSurface(s: number, phi: number, out: THREE.Vector3, normal: THREE.Vector3): void {
+  const dx = Math.sin(phi);
+  const dz = Math.cos(phi);
+  if (s <= HEAD_EQUATOR_S) {
+    const th = s / HEAD_R;
+    normal.set(Math.sin(th) * dx, Math.cos(th), Math.sin(th) * dz);
+    out.set(normal.x * HEAD_R, HEAD_CENTER_Y + normal.y * HEAD_R, normal.z * HEAD_R);
+  } else {
+    normal.set(dx, 0, dz);
+    out.set(dx * HEAD_R, HEAD_CENTER_Y - (s - HEAD_EQUATOR_S), dz * HEAD_R);
+  }
+}
+
+/** Altura (y) na superfície da cabeça para uma distância s a partir do topo. */
+const yAtS = (s: number): number =>
+  s <= HEAD_EQUATOR_S ? HEAD_CENTER_Y + Math.cos(s / HEAD_R) * HEAD_R : HEAD_CENTER_Y - (s - HEAD_EQUATOR_S);
+
+interface ShellOptions {
+  sMin: number;
+  sMax: number;
+  phiMin: number;
+  phiMax: number;
+  /** Fecha a malha ao redor da cabeça (φ cobrindo 360°). */
+  wrap: boolean;
+  nS: number;
+  nPhi: number;
+  /** Espessura dos fios acima da pele (negativo = escondido). */
+  height: (s: number, phi: number) => number;
+  /** Limita a espessura num ponto (ex.: cabelo achatado sob o chapéu). */
+  clamp?: (base: THREE.Vector3, normal: THREE.Vector3, h: number) => number;
+  /** Multiplicador de brilho por vértice (mechas e sulcos sutis na mesma malha). */
+  shade?: (s: number, phi: number) => number;
+}
+
+/** Gera uma malha única e contínua sobre a superfície da cabeça. */
+function buildHeadShell(o: ShellOptions): THREE.BufferGeometry {
+  const cols = o.wrap ? o.nPhi : o.nPhi + 1;
+  const rows = o.nS + 1;
+  const positions = new Float32Array(rows * cols * 3);
+  const colors = new Float32Array(rows * cols * 3);
+  const p = new THREE.Vector3();
+  const n = new THREE.Vector3();
+
+  for (let i = 0; i < rows; i++) {
+    const s = o.sMin + ((o.sMax - o.sMin) * i) / o.nS;
+    for (let j = 0; j < cols; j++) {
+      const phi = o.phiMin + ((o.phiMax - o.phiMin) * j) / o.nPhi;
+      headSurface(s, phi, p, n);
+      let h = o.height(s, phi);
+      if (o.clamp && h > 0) h = o.clamp(p, n, h);
+      if (h <= 0 && p.y < 0.5) {
+        const dy = 0.5 - p.y;
+        h -= HEAD_R - Math.sqrt(Math.max(0, HEAD_R * HEAD_R - dy * dy));
+      }
+      p.addScaledVector(n, h);
+      const k = (i * cols + j) * 3;
+      positions[k] = p.x;
+      positions[k + 1] = p.y;
+      positions[k + 2] = p.z;
+      const c = o.shade ? o.shade(s, phi) : 1;
+      colors[k] = c;
+      colors[k + 1] = c;
+      colors[k + 2] = c;
+    }
+  }
+
+  const indices: number[] = [];
+  for (let i = 0; i < o.nS; i++) {
+    for (let j = 0; j < o.nPhi; j++) {
+      const j2 = o.wrap ? (j + 1) % o.nPhi : j + 1;
+      const a = i * cols + j;
+      const b = i * cols + j2;
+      const c = (i + 1) * cols + j;
+      const d = (i + 1) * cols + j2;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  // No topo (s = 0) todos os vértices coincidem: normal aponta para cima
+  if (o.sMin === 0) {
+    const normals = geo.getAttribute("normal") as THREE.BufferAttribute;
+    for (let j = 0; j < cols; j++) normals.setXYZ(j, 0, 1, 0);
+  }
+  return geo;
+}
+
+/** Converte "cobertura" (distância até a borda, em metros) em espessura com borda definida. */
+const coverHeight = (edgeDist: number, thickness: number, softness = 0.03): number =>
+  TUCK + (thickness - TUCK) * smooth01(edgeDist / softness);
+
+/**
+ * Volume interno de cada chapéu: o cabelo precisa caber aqui dentro.
+ * Retorna null se o chapéu não cobre aquela altura (cabelo livre abaixo da aba).
+ */
+function hatInterior(hat: HatType): ((x: number, y: number, z: number) => boolean) | null {
+  const radial = (x: number, z: number) => Math.hypot(x, z);
+  switch (hat) {
+    case "cap":
+      // Copa esférica do boné (raio 0.52 centrada em y = 1.14), até a borda em y ≈ 1.205
+      return (x, y, z) => y < 1.2 || Math.hypot(x, y - 1.14, z) < 0.507;
+    case "beanie":
+      // Barra dobrada (cilindro) + cúpula elipsoidal do gorro
+      return (x, y, z) => {
+        if (y < 1.31) return true;
+        if (y < 1.38) return radial(x, z) < 0.53;
+        return (x * x + z * z) / 0.485 ** 2 + ((y - 1.38) / 0.56) ** 2 < 1;
+      };
+    case "bucket":
+      // Copa cilíndrica + interior da aba caída
+      return (x, y, z) => {
+        if (y < 1.34) return true;
+        if (y < 1.43) return radial(x, z) < 0.52;
+        return radial(x, z) < 0.46 && y < 1.64;
+      };
+    case "tophat":
+      // Cilindro alto da cartola acima da aba
+      return (x, y, z) => y < 1.44 || (radial(x, z) < 0.37 && y < 1.9);
+    default:
+      return null;
+  }
+}
+
+/** Achata a espessura do cabelo até caber dentro do chapéu (busca binária ao longo da normal). */
+function makeHatClamp(hat: HatType): ShellOptions["clamp"] {
+  const inside = hatInterior(hat);
+  if (!inside) return undefined;
+  const q = new THREE.Vector3();
+  const fits = (base: THREE.Vector3, normal: THREE.Vector3, h: number) => {
+    q.copy(base).addScaledVector(normal, h);
+    return inside(q.x, q.y, q.z);
+  };
+  return (base, normal, h) => {
+    if (fits(base, normal, h)) return h;
+    if (!fits(base, normal, 0)) return TUCK;
+    let lo = 0;
+    let hi = h;
+    for (let i = 0; i < 10; i++) {
+      const mid = (lo + hi) / 2;
+      if (fits(base, normal, mid)) lo = mid;
+      else hi = mid;
+    }
+    return lo;
+  };
+}
+
 /**
  * Constrói o modelo 3D do Cabelo
- * Totalmente esculpido com geometrias orgânicas, curvas suaves e camadas (sem formas quadradas).
+ * Cada estilo é uma única malha contínua (sem peças sobrepostas), com volume, franja e
+ * mechas esculpidas diretamente no campo de espessura. Com chapéu, o cabelo é achatado
+ * para dentro dele e só aparece abaixo da aba.
  */
-export function buildHairModel(type: HairType): THREE.Group {
+export function buildHairModel(type: HairType, hat: HatType = "none"): THREE.Group {
   const group = new THREE.Group();
   if (type === "bald") return group;
 
-  // Material principal rico, com brilho acetinado natural de cabelo
   const hairMat = new THREE.MeshStandardMaterial({
     color: DEFAULT_HAIR_COLOR,
-    roughness: 0.42,
-    metalness: 0.12,
+    roughness: 0.5,
+    metalness: 0.08,
+    vertexColors: true,
   });
 
-  // Material secundário levemente iluminado para mechas de destaque
-  const hairMatHighlight = new THREE.MeshStandardMaterial({
-    color: DEFAULT_HAIR_HIGHLIGHT_COLOR,
-    roughness: 0.38,
-    metalness: 0.15,
-  });
+  // Mistura frente (0) → nuca (1) em função do ângulo
+  const backness = (phi: number) => (1 - Math.cos(phi)) / 2;
+
+  let opts: Omit<ShellOptions, "sMin" | "phiMin" | "phiMax" | "wrap" | "nPhi"> | null = null;
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 1) RASPADO CURTO (BUZZCUT / FADE)
+  // 1) RASPADO CURTO (BUZZCUT): capa fina e uniforme com costeletas
   // ───────────────────────────────────────────────────────────────────────────
   if (type === "buzzcut") {
-    // Calota craniana ajustada e suave
-    const dome = new THREE.Mesh(
-      new THREE.SphereGeometry(0.514, 28, 20, 0, Math.PI * 2, 0, Math.PI * 0.46),
-      hairMat,
-    );
-    dome.position.y = 1.12;
-
-    // Linha frontal da testa (arco suave que acompanha a curvatura da cabeça)
-    const hairline = new THREE.Mesh(
-      new THREE.TorusGeometry(0.485, 0.024, 8, 24, Math.PI * 0.65),
-      hairMat,
-    );
-    hairline.position.set(0, 1.34, 0.14);
-    hairline.rotation.x = Math.PI / 2.3;
-
-    // Costeletas limpas e afiladas nas têmporas
-    const sideburnL = new THREE.Mesh(new THREE.CapsuleGeometry(0.026, 0.12, 6, 8), hairMat);
-    sideburnL.position.set(-0.48, 1.06, 0.10);
-    sideburnL.rotation.z = -0.1;
-
-    const sideburnR = new THREE.Mesh(new THREE.CapsuleGeometry(0.026, 0.12, 6, 8), hairMat);
-    sideburnR.position.set(0.48, 1.06, 0.10);
-    sideburnR.rotation.z = 0.1;
-
-    // Acabamento suave da nuca
-    const napeArc = new THREE.Mesh(
-      new THREE.TorusGeometry(0.488, 0.025, 8, 24, Math.PI * 0.75),
-      hairMat,
-    );
-    napeArc.position.set(0, 1.10, -0.10);
-    napeArc.rotation.x = -Math.PI / 2.3;
-
-    group.add(dome, hairline, sideburnL, sideburnR, napeArc);
-    return group;
+    const edge = (phi: number) => {
+      const a = Math.abs(phi);
+      const sideburn = 0.1 * Math.exp(-(((a - 1.33) / 0.12) ** 2));
+      return 0.47 + 0.44 * smooth01(backness(phi) * 1.4) + sideburn;
+    };
+    opts = {
+      sMax: 1.05,
+      nS: 90,
+      height: (s, phi) => coverHeight(edge(phi) - s, 0.026, 0.02),
+      shade: (s) => 1.15 - 0.15 * smoothstep(0, 0.9, s),
+    };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 2) CABELO MÉDIO (TEXTURED FLOW & SIDE PART)
+  // 2) CABELO MÉDIO: volume no topo, franja varrida para o lado e pontas na nuca
   // ───────────────────────────────────────────────────────────────────────────
   if (type === "medium") {
-    // Base de volume arredondada
-    const crown = new THREE.Mesh(
-      new THREE.SphereGeometry(0.522, 24, 18, 0, Math.PI * 2, 0, Math.PI * 0.48),
-      hairMat,
-    );
-    crown.position.y = 1.14;
-
-    // Mechas esculpidas do topo fluindo naturalmente para a lateral
-    const topLock1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.065, 0.32, 8, 12), hairMatHighlight);
-    topLock1.position.set(-0.10, 1.55, 0.18);
-    topLock1.rotation.set(-0.15, 0.25, -0.35);
-
-    const topLock2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.36, 8, 12), hairMat);
-    topLock2.position.set(0.10, 1.56, 0.16);
-    topLock2.rotation.set(-0.12, 0.20, -0.28);
-
-    const topLock3 = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.30, 8, 12), hairMatHighlight);
-    topLock3.position.set(0.28, 1.51, 0.14);
-    topLock3.rotation.set(-0.10, 0.15, -0.42);
-
-    // Franja lateral fluida em degradê acima da testa
-    const fringe1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.046, 0.28, 8, 10), hairMatHighlight);
-    fringe1.position.set(-0.06, 1.36, 0.44);
-    fringe1.rotation.set(0.1, 0.35, -0.65);
-
-    const fringe2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.042, 0.26, 8, 10), hairMat);
-    fringe2.position.set(0.14, 1.32, 0.43);
-    fringe2.rotation.set(0.12, 0.25, -0.55);
-
-    const fringe3 = new THREE.Mesh(new THREE.CapsuleGeometry(0.038, 0.22, 8, 10), hairMatHighlight);
-    fringe3.position.set(0.32, 1.28, 0.40);
-    fringe3.rotation.set(0.15, 0.18, -0.45);
-
-    // Mechas laterais curvadas abraçando a cabeça
-    const sideL = new THREE.Mesh(new THREE.CapsuleGeometry(0.058, 0.26, 8, 10), hairMat);
-    sideL.position.set(-0.46, 1.22, 0.10);
-    sideL.rotation.set(0.10, 0, 0.18);
-
-    const sideR = new THREE.Mesh(new THREE.CapsuleGeometry(0.062, 0.28, 8, 10), hairMat);
-    sideR.position.set(0.46, 1.20, 0.10);
-    sideR.rotation.set(0.10, 0, -0.18);
-
-    // Volume traseiro suave
-    const backLock = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.32, 8, 10), hairMat);
-    backLock.position.set(0, 1.22, -0.44);
-    backLock.rotation.set(-0.15, 0, 0);
-
-    group.add(
-      crown,
-      topLock1,
-      topLock2,
-      topLock3,
-      fringe1,
-      fringe2,
-      fringe3,
-      sideL,
-      sideR,
-      backLock,
-    );
-    return group;
+    const edge = (phi: number) => {
+      const a = Math.abs(phi);
+      // Franja assimétrica (desce mais sobre o lado direito) com pontas em mechas
+      const front = 0.5 + 0.06 * smoothstep(-0.6, 0.5, phi) - 0.02 * smoothstep(0.5, 0.9, phi);
+      const tips = 0.03 * Math.max(0, Math.sin(phi * 11 + 0.6)) ** 2;
+      const sides = 0.86;
+      const back = 0.99 + 0.035 * Math.max(0, Math.sin(phi * 9)) ** 2;
+      const toSide = smoothstep(0.55, 1.2, a);
+      const toBack = smoothstep(1.6, 2.6, a);
+      return (front + tips) * (1 - toSide) + (sides * (1 - toBack) + back * toBack) * toSide;
+    };
+    // Mechas varridas da risca (φ ≈ -0.5) para a direita
+    const strand = (s: number, phi: number) => Math.sin(phi * 16 - s * 9);
+    opts = {
+      sMax: 1.1,
+      nS: 110,
+      height: (s, phi) => {
+        const lift = 0.075 - 0.03 * smoothstep(0.2, 0.9, s);
+        const part = 0.025 * Math.exp(-(((phi + 0.5) / 0.07) ** 2)) * (1 - smoothstep(0.1, 0.5, s));
+        const t = lift * (1 + 0.1 * strand(s, phi)) - part;
+        return coverHeight(edge(phi) - s, t);
+      },
+      shade: (s, phi) => 1.0 + 0.16 * strand(s, phi) + 0.18 * (1 - smoothstep(0, 0.6, s)),
+    };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 3) COM TOPETE (POMPADOUR ROCKABILLY ESCULPIDO)
+  // 3) TOPETE (POMPADOUR): laterais rentes e um grande topete único na frente
   // ───────────────────────────────────────────────────────────────────────────
   if (type === "pompadour") {
-    // Base bem ajustada ao crânio
-    const base = new THREE.Mesh(
-      new THREE.SphereGeometry(0.518, 24, 16, 0, Math.PI * 2, 0, Math.PI * 0.48),
-      hairMat,
-    );
-    base.position.y = 1.12;
-
-    // Grande corpo ondulado do topete (onda frontal fluida)
-    const waveFront = new THREE.Mesh(new THREE.SphereGeometry(0.24, 18, 14), hairMatHighlight);
-    waveFront.scale.set(1.15, 1.05, 1.35);
-    waveFront.position.set(0, 1.48, 0.30);
-    waveFront.rotation.x = -0.32;
-
-    const waveArch = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.36, 10, 14), hairMat);
-    waveArch.position.set(0, 1.55, 0.12);
-    waveArch.rotation.x = Math.PI / 2.3;
-
-    // Ranhuras elegantes penteadas para trás (dão textura e brilho realista de pomada)
-    const ribCenter = new THREE.Mesh(new THREE.CapsuleGeometry(0.042, 0.44, 8, 10), hairMatHighlight);
-    ribCenter.position.set(0, 1.59, 0.16);
-    ribCenter.rotation.x = 0.65;
-
-    const ribL = new THREE.Mesh(new THREE.CapsuleGeometry(0.038, 0.40, 8, 10), hairMat);
-    ribL.position.set(-0.11, 1.56, 0.15);
-    ribL.rotation.set(0.62, 0.12, 0.15);
-
-    const ribR = new THREE.Mesh(new THREE.CapsuleGeometry(0.038, 0.40, 8, 10), hairMat);
-    ribR.position.set(0.11, 1.56, 0.15);
-    ribR.rotation.set(0.62, -0.12, -0.15);
-
-    // Rolo frontal suave virado na ponta
-    const frontRoll = new THREE.Mesh(
-      new THREE.TorusGeometry(0.13, 0.042, 10, 20, Math.PI),
-      hairMatHighlight,
-    );
-    frontRoll.position.set(0, 1.45, 0.40);
-    frontRoll.rotation.x = 0.4;
-
-    // Laterais penteadas rente
-    const sweepL = new THREE.Mesh(new THREE.CapsuleGeometry(0.046, 0.28, 8, 10), hairMat);
-    sweepL.position.set(-0.43, 1.28, 0.15);
-    sweepL.rotation.set(-0.4, -0.3, 0.1);
-
-    const sweepR = new THREE.Mesh(new THREE.CapsuleGeometry(0.046, 0.28, 8, 10), hairMat);
-    sweepR.position.set(0.43, 1.28, 0.15);
-    sweepR.rotation.set(-0.4, 0.3, -0.1);
-
-    group.add(base, waveFront, waveArch, ribCenter, ribL, ribR, frontRoll, sweepL, sweepR);
-    return group;
+    const edge = (phi: number) => 0.45 + 0.42 * smooth01(backness(phi) * 1.5);
+    const comb = (s: number, phi: number) => Math.sin(phi * 22) * (1 - smoothstep(0.5, 0.8, s));
+    opts = {
+      sMax: 1.0,
+      nS: 120,
+      height: (s, phi) => {
+        const front = Math.exp(-((phi / 0.75) ** 2));
+        const quiff = 0.2 * Math.exp(-(((s - 0.34) / 0.17) ** 2)) * front;
+        const crown = 0.06 * (1 - smoothstep(0.3, 0.75, s));
+        const t = 0.03 + crown + quiff;
+        return coverHeight(edge(phi) - s, t * (1 + 0.05 * comb(s, phi)), 0.018);
+      },
+      shade: (s, phi) => 1.0 + 0.14 * comb(s, phi) + 0.22 * Math.exp(-(((s - 0.3) / 0.16) ** 2)) * Math.exp(-((phi / 0.7) ** 2)),
+    };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 4) COMPRIDO (LONG FLOWING LOCKS)
+  // 4) COMPRIDO: risca no meio, mechas emoldurando o rosto e caindo até os ombros
   // ───────────────────────────────────────────────────────────────────────────
   if (type === "long") {
-    // Calota superior com divisão central suave
-    const crown = new THREE.Mesh(
-      new THREE.SphereGeometry(0.524, 24, 18, 0, Math.PI * 2, 0, Math.PI * 0.50),
-      hairMat,
-    );
-    crown.position.y = 1.13;
-
-    // Mechas longas da frente caindo pelos ombros esquerdo e direito
-    // Lado Esquerdo: cascata em 3 segmentos curvados
-    const leftUpper = new THREE.Mesh(new THREE.CapsuleGeometry(0.065, 0.32, 8, 10), hairMatHighlight);
-    leftUpper.position.set(-0.45, 1.16, 0.16);
-    leftUpper.rotation.set(0.20, 0, 0.14);
-
-    const leftMid = new THREE.Mesh(new THREE.CapsuleGeometry(0.060, 0.30, 8, 10), hairMat);
-    leftMid.position.set(-0.43, 0.88, 0.20);
-    leftMid.rotation.set(0.14, 0, 0.08);
-
-    const leftTip = new THREE.Mesh(new THREE.CapsuleGeometry(0.050, 0.26, 8, 10), hairMatHighlight);
-    leftTip.position.set(-0.39, 0.64, 0.22);
-    leftTip.rotation.set(-0.06, 0, -0.10);
-
-    // Lado Direito: cascata em 3 segmentos curvados
-    const rightUpper = new THREE.Mesh(new THREE.CapsuleGeometry(0.065, 0.32, 8, 10), hairMatHighlight);
-    rightUpper.position.set(0.45, 1.16, 0.16);
-    rightUpper.rotation.set(0.20, 0, -0.14);
-
-    const rightMid = new THREE.Mesh(new THREE.CapsuleGeometry(0.060, 0.30, 8, 10), hairMat);
-    rightMid.position.set(0.43, 0.88, 0.20);
-    rightMid.rotation.set(0.14, 0, -0.08);
-
-    const rightTip = new THREE.Mesh(new THREE.CapsuleGeometry(0.050, 0.26, 8, 10), hairMatHighlight);
-    rightTip.position.set(0.39, 0.64, 0.22);
-    rightTip.rotation.set(-0.06, 0, 0.10);
-
-    // Manto de mechas fluidas nas costas (múltiplas mechas cilíndricas/capsulares com curvatura)
-    const backCenterUp = new THREE.Mesh(new THREE.CapsuleGeometry(0.088, 0.44, 8, 12), hairMat);
-    backCenterUp.position.set(0, 1.08, -0.44);
-
-    const backCenterLow = new THREE.Mesh(new THREE.CapsuleGeometry(0.078, 0.42, 8, 12), hairMatHighlight);
-    backCenterLow.position.set(0, 0.72, -0.46);
-
-    const backLeft = new THREE.Mesh(new THREE.CapsuleGeometry(0.080, 0.46, 8, 12), hairMat);
-    backLeft.position.set(-0.20, 0.84, -0.42);
-    backLeft.rotation.z = 0.12;
-
-    const backRight = new THREE.Mesh(new THREE.CapsuleGeometry(0.080, 0.46, 8, 12), hairMat);
-    backRight.position.set(0.20, 0.84, -0.42);
-    backRight.rotation.z = -0.12;
-
-    const backOuterL = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.38, 8, 10), hairMatHighlight);
-    backOuterL.position.set(-0.35, 0.88, -0.34);
-    backOuterL.rotation.z = 0.18;
-
-    const backOuterR = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.38, 8, 10), hairMatHighlight);
-    backOuterR.position.set(0.35, 0.88, -0.34);
-    backOuterR.rotation.z = -0.18;
-
-    group.add(
-      crown,
-      leftUpper,
-      leftMid,
-      leftTip,
-      rightUpper,
-      rightMid,
-      rightTip,
-      backCenterUp,
-      backCenterLow,
-      backLeft,
-      backRight,
-      backOuterL,
-      backOuterR,
-    );
-    return group;
+    // Distância até a borda: calota até a testa ∪ cortina que cai dos lados e da nuca
+    const edgeDist = (s: number, phi: number) => {
+      const a = Math.abs(phi);
+      const forehead = 0.49 - s;
+      const length = 1.27 + 0.04 * smoothstep(1.0, 2.8, a) + 0.035 * Math.max(0, Math.sin(phi * 13)) ** 2;
+      const curtain = Math.min(length - s, (a - 0.86) * HEAD_R);
+      return Math.max(forehead, curtain);
+    };
+    const strand = (s: number, phi: number) => Math.sin(phi * 14 + s * 2.5);
+    opts = {
+      sMax: 1.4,
+      nS: 140,
+      height: (s, phi) => {
+        const part = 0.03 * Math.exp(-((phi / 0.06) ** 2)) * (1 - smoothstep(0.05, 0.5, s));
+        const flare = 0.05 * smoothstep(0.75, 1.3, s);
+        const t = (0.055 + flare) * (1 + 0.12 * strand(s, phi)) - part;
+        return coverHeight(edgeDist(s, phi), t);
+      },
+      shade: (s, phi) => 1.0 + 0.16 * strand(s, phi) + 0.16 * (1 - smoothstep(0, 0.6, s)),
+    };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 5) TIGELA (ROUNDED BOWL CUT / MODERN CROP)
+  // 5) TIGELA (BOWL CUT): cúpula uniforme com barra reta e franja cheia
   // ───────────────────────────────────────────────────────────────────────────
   if (type === "bowl") {
-    // Cúpula superior arredondada com volume homogêneo
-    const dome = new THREE.Mesh(
-      new THREE.SphereGeometry(0.530, 28, 20, 0, Math.PI * 2, 0, Math.PI * 0.44),
-      hairMat,
-    );
-    dome.position.y = 1.14;
-
-    // Borda contínua arredondada da tigela (Torus frontal que dá a volta com acabamento suave)
-    const fringeRim = new THREE.Mesh(
-      new THREE.TorusGeometry(0.485, 0.052, 12, 28, Math.PI * 0.72),
-      hairMatHighlight,
-    );
-    fringeRim.position.set(0, 1.27, 0.08);
-    fringeRim.rotation.x = Math.PI / 2 + 0.14;
-
-    // Curvas laterais conectadas suavemente
-    const sideRimL = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.28, 8, 10), hairMat);
-    sideRimL.position.set(-0.46, 1.24, 0.04);
-    sideRimL.rotation.set(0.08, 0, 0.10);
-
-    const sideRimR = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.28, 8, 10), hairMat);
-    sideRimR.position.set(0.46, 1.24, 0.04);
-    sideRimR.rotation.set(0.08, 0, -0.10);
-
-    // Contorno traseiro da tigela
-    const backRim = new THREE.Mesh(
-      new THREE.TorusGeometry(0.488, 0.052, 12, 28, Math.PI * 0.75),
-      hairMat,
-    );
-    backRim.position.set(0, 1.23, -0.08);
-    backRim.rotation.x = -Math.PI / 2 - 0.14;
-
-    // Franja frontal em mechas sutis arredondadas (sem quinas duras)
-    const bangCenter = new THREE.Mesh(new THREE.CapsuleGeometry(0.038, 0.24, 6, 8), hairMatHighlight);
-    bangCenter.position.set(0, 1.30, 0.44);
-    bangCenter.rotation.z = Math.PI / 2;
-
-    const bangL = new THREE.Mesh(new THREE.CapsuleGeometry(0.036, 0.20, 6, 8), hairMat);
-    bangL.position.set(-0.20, 1.28, 0.42);
-    bangL.rotation.set(0, 0.2, Math.PI / 2 + 0.1);
-
-    const bangR = new THREE.Mesh(new THREE.CapsuleGeometry(0.036, 0.20, 6, 8), hairMat);
-    bangR.position.set(0.20, 1.28, 0.42);
-    bangR.rotation.set(0, -0.2, Math.PI / 2 - 0.1);
-
-    group.add(dome, fringeRim, sideRimL, sideRimR, backRim, bangCenter, bangL, bangR);
-    return group;
+    const edge = (phi: number) => {
+      return 0.56 + 0.13 * smooth01(backness(phi) * 1.3);
+    };
+    opts = {
+      sMax: 0.9,
+      nS: 110,
+      height: (s, phi) => {
+        const t = 0.07 + 0.02 * (1 - smoothstep(0, 0.5, s));
+        return coverHeight(edge(phi) - s, t, 0.02);
+      },
+      shade: (s, phi) => 1.0 + 0.08 * Math.sin(phi * 26) + 0.2 * (1 - smoothstep(0, 0.5, s)),
+    };
   }
 
+  if (!opts) return group;
+
+  const mesh = new THREE.Mesh(
+    buildHeadShell({
+      ...opts,
+      sMin: 0,
+      phiMin: -Math.PI,
+      phiMax: Math.PI,
+      wrap: true,
+      nS: Math.round(opts.sMax / 0.006),
+      nPhi: 256,
+      clamp: makeHatClamp(hat),
+    }),
+    hairMat,
+  );
+  mesh.castShadow = true;
+  group.add(mesh);
   return group;
 }
 
 /**
- * Interface para fatias de lofting contínuo de barbas e bigodes (aspecto inteiriço).
+ * Formas da barba no "plano do rosto": u = posição horizontal ao longo da pele (metros,
+ * 0 = centro) e y = altura. Cada função devolve a distância (aprox.) até a borda: > 0 dentro.
  */
-interface BeardLoftSlice {
-  center: [number, number, number];
-  rx: number;
-  ry: number;
-  rz?: number;
-}
-
-/**
- * Constrói malhas contínuas e unificadas (inteiriças) sem emendas ou cápsulas soltas.
- */
-function createBeardLoftMesh(slices: BeardLoftSlice[], radialSegments = 16): THREE.BufferGeometry {
-  const geom = new THREE.BufferGeometry();
-  const numSlices = slices.length;
-  const vertices: number[] = [];
-  const indices: number[] = [];
-
-  for (let i = 0; i < numSlices; i++) {
-    const s = slices[i]!;
-    const [cx, cy, cz] = s.center;
-    const rz = s.rz ?? Math.min(s.rx, s.ry);
-
-    for (let j = 0; j < radialSegments; j++) {
-      const u = (j / radialSegments) * Math.PI * 2;
-      const lx = Math.cos(u) * s.rx;
-      const ly = Math.sin(u) * s.ry;
-      const sinU = Math.sin(u);
-      // Volume frontal completo e projeção de ancoragem controlada na face traseira
-      const fwd = (sinU >= 0 ? sinU : sinU * 0.3) * rz;
-      vertices.push(cx + lx, cy + ly, cz + fwd);
-    }
-  }
-
-  // Tampa inicial
-  const startCenter = slices[0]!.center;
-  const startCenterIdx = vertices.length / 3;
-  vertices.push(startCenter[0], startCenter[1], startCenter[2]);
-  for (let j = 0; j < radialSegments; j++) {
-    const nextJ = (j + 1) % radialSegments;
-    indices.push(startCenterIdx, j, nextJ);
-  }
-
-  // Quads do corpo
-  for (let i = 0; i < numSlices - 1; i++) {
-    for (let j = 0; j < radialSegments; j++) {
-      const nextJ = (j + 1) % radialSegments;
-      const c1 = i * radialSegments + j;
-      const c2 = i * radialSegments + nextJ;
-      const c3 = (i + 1) * radialSegments + j;
-      const c4 = (i + 1) * radialSegments + nextJ;
-
-      indices.push(c1, c3, c2);
-      indices.push(c2, c3, c4);
-    }
-  }
-
-  // Tampa final
-  const endSliceIdx = numSlices - 1;
-  const endCenter = slices[endSliceIdx]!.center;
-  const endCenterIdx = vertices.length / 3;
-  vertices.push(endCenter[0], endCenter[1], endCenter[2]);
-  for (let j = 0; j < radialSegments; j++) {
-    const nextJ = (j + 1) % radialSegments;
-    const curr = endSliceIdx * radialSegments + j;
-    const next = endSliceIdx * radialSegments + nextJ;
-    indices.push(endCenterIdx, next, curr);
-  }
-
-  geom.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
-  geom.setIndex(indices);
-  geom.computeVertexNormals();
-  return geom;
-}
-
-/** 1) Grande Bigode Único Contínuo */
-function createUnifiedMustacheGeo(scale = 1.0): THREE.BufferGeometry {
-  const slices: BeardLoftSlice[] = [
-    { center: [-0.22 * scale, 0.935, 0.468], rx: 0.020 * scale, ry: 0.024 * scale, rz: 0.030 * scale },
-    { center: [-0.16 * scale, 0.948, 0.505], rx: 0.042 * scale, ry: 0.062 * scale, rz: 0.052 * scale },
-    { center: [-0.08 * scale, 0.965, 0.530], rx: 0.046 * scale, ry: 0.075 * scale, rz: 0.060 * scale },
-    { center: [0.0, 0.958, 0.538], rx: 0.040 * scale, ry: 0.070 * scale, rz: 0.058 * scale },
-    { center: [0.08 * scale, 0.965, 0.530], rx: 0.046 * scale, ry: 0.075 * scale, rz: 0.060 * scale },
-    { center: [0.16 * scale, 0.948, 0.505], rx: 0.042 * scale, ry: 0.062 * scale, rz: 0.052 * scale },
-    { center: [0.22 * scale, 0.935, 0.468], rx: 0.020 * scale, ry: 0.024 * scale, rz: 0.030 * scale },
-  ];
-  return createBeardLoftMesh(slices, 16);
-}
-
-/** 2) Cavanhaque Grande Único de Peça Inteiriça */
-function createUnifiedGoateeGeo(scale = 1.0): THREE.BufferGeometry {
-  const slices: BeardLoftSlice[] = [
-    { center: [0, 0.885, 0.525], rx: 0.060 * scale, ry: 0.028, rz: 0.042 * scale },
-    { center: [0, 0.830, 0.540], rx: 0.100 * scale, ry: 0.038, rz: 0.058 * scale },
-    { center: [0, 0.760, 0.552], rx: 0.150 * scale, ry: 0.048, rz: 0.072 * scale },
-    { center: [0, 0.700, 0.552], rx: 0.160 * scale, ry: 0.050, rz: 0.075 * scale },
-    { center: [0, 0.650, 0.538], rx: 0.130 * scale, ry: 0.042, rz: 0.065 * scale },
-    { center: [0, 0.610, 0.518], rx: 0.090 * scale, ry: 0.032, rz: 0.050 * scale },
-  ];
-  return createBeardLoftMesh(slices, 16);
-}
-
-/** 3) Conectores Verticais Contínuos do Bigode ao Cavanhaque */
-function createSideConnectorGeo(side: "left" | "right", scale = 1.0): THREE.BufferGeometry {
-  const sign = side === "left" ? -1 : 1;
-  const slices: BeardLoftSlice[] = [
-    { center: [sign * 0.14 * scale, 0.94, 0.508], rx: 0.032 * scale, ry: 0.028 * scale, rz: 0.040 * scale },
-    { center: [sign * 0.13 * scale, 0.86, 0.518], rx: 0.035 * scale, ry: 0.032 * scale, rz: 0.045 * scale },
-    { center: [sign * 0.12 * scale, 0.78, 0.528], rx: 0.038 * scale, ry: 0.035 * scale, rz: 0.048 * scale },
-  ];
-  return createBeardLoftMesh(slices, 12);
-}
-
-/** 4) Arco Contínuo da Mandíbula de Orelha a Orelha */
-function createJawlineArchGeo(scale = 1.0, isThick = false): THREE.BufferGeometry {
-  const rMult = (isThick ? 1.25 : 1.0) * scale;
-  // Cada ponto é projetado radialmente para fora da cápsula da cabeça (raio 0.50)
-  // com distância radial garantida entre 0.536 e 0.551 em todas as fatias
-  const slices: BeardLoftSlice[] = [
-    { center: [-0.485, 1.06, 0.230], rx: 0.036 * rMult, ry: 0.040 * rMult, rz: 0.042 * rMult },
-    { center: [-0.460, 0.94, 0.285], rx: 0.042 * rMult, ry: 0.046 * rMult, rz: 0.048 * rMult },
-    { center: [-0.405, 0.82, 0.365], rx: 0.046 * rMult, ry: 0.048 * rMult, rz: 0.054 * rMult },
-    { center: [-0.290, 0.72, 0.465], rx: 0.048 * rMult, ry: 0.050 * rMult, rz: 0.058 * rMult },
-    { center: [-0.150, 0.67, 0.530], rx: 0.050 * rMult, ry: 0.050 * rMult, rz: 0.062 * rMult },
-    { center: [0.0, 0.65, 0.548], rx: 0.052 * rMult, ry: 0.052 * rMult, rz: 0.065 * rMult },
-    { center: [0.150, 0.67, 0.530], rx: 0.050 * rMult, ry: 0.050 * rMult, rz: 0.062 * rMult },
-    { center: [0.290, 0.72, 0.465], rx: 0.048 * rMult, ry: 0.050 * rMult, rz: 0.058 * rMult },
-    { center: [0.405, 0.82, 0.365], rx: 0.046 * rMult, ry: 0.048 * rMult, rz: 0.054 * rMult },
-    { center: [0.460, 0.94, 0.285], rx: 0.042 * rMult, ry: 0.046 * rMult, rz: 0.048 * rMult },
-    { center: [0.485, 1.06, 0.230], rx: 0.036 * rMult, ry: 0.040 * rMult, rz: 0.042 * rMult },
-  ];
-  return createBeardLoftMesh(slices, 16);
-}
-
-/** 5) Preenchimento Lateral das Bochechas (Inteiriço) */
-function createCheekContourGeo(side: "left" | "right", scale = 1.0): THREE.BufferGeometry {
-  const sign = side === "left" ? -1 : 1;
-  const slices: BeardLoftSlice[] = [
-    { center: [sign * 0.44, 1.02, 0.315], rx: 0.042 * scale, ry: 0.038 * scale, rz: 0.045 * scale },
-    { center: [sign * 0.36, 0.92, 0.412], rx: 0.048 * scale, ry: 0.042 * scale, rz: 0.052 * scale },
-    { center: [sign * 0.24, 0.84, 0.495], rx: 0.045 * scale, ry: 0.038 * scale, rz: 0.048 * scale },
-  ];
-  return createBeardLoftMesh(slices, 12);
-}
-
-/** 6) Barbão Comprido e Cheio (Cascata até o peito de peça inteiriça) */
-function createUnifiedLongBeardGeo(scale = 1.0): THREE.BufferGeometry {
-  const slices: BeardLoftSlice[] = [
-    { center: [0, 0.78, 0.555], rx: 0.16 * scale, ry: 0.045, rz: 0.075 * scale },
-    { center: [0, 0.70, 0.585], rx: 0.19 * scale, ry: 0.055, rz: 0.090 * scale },
-    { center: [0, 0.60, 0.595], rx: 0.20 * scale, ry: 0.055, rz: 0.095 * scale },
-    { center: [0, 0.50, 0.585], rx: 0.18 * scale, ry: 0.055, rz: 0.090 * scale },
-    { center: [0, 0.40, 0.560], rx: 0.15 * scale, ry: 0.048, rz: 0.080 * scale },
-    { center: [0, 0.30, 0.530], rx: 0.10 * scale, ry: 0.038, rz: 0.065 * scale },
-  ];
-  return createBeardLoftMesh(slices, 16);
-}
-
-/** 7) Preenchimento Anatômico do Queixo (100% frontal em lofting, sem penetração esférica) */
-function createChinPadGeo(scale = 1.0): THREE.BufferGeometry {
-  const slices: BeardLoftSlice[] = [
-    { center: [0, 0.74, 0.540], rx: 0.13 * scale, ry: 0.035 * scale, rz: 0.050 * scale },
-    { center: [0, 0.69, 0.555], rx: 0.16 * scale, ry: 0.042 * scale, rz: 0.062 * scale },
-    { center: [0, 0.64, 0.550], rx: 0.15 * scale, ry: 0.040 * scale, rz: 0.065 * scale },
-    { center: [0, 0.59, 0.530], rx: 0.11 * scale, ry: 0.032 * scale, rz: 0.052 * scale },
-  ];
-  return createBeardLoftMesh(slices, 16);
-}
+const beardShapes = {
+  mustache: (u: number, y: number, scale: number) => {
+    const w = 0.22 * scale;
+    const k = Math.abs(u) / w;
+    const yc = 0.905 - 0.05 * k * k;
+    const half = 0.042 * scale * Math.sqrt(Math.max(0, 1 - k ** 2.5)) * (1 - 0.25 * Math.exp(-((u / 0.03) ** 2)));
+    return half - Math.abs(y - yc);
+  },
+  goatee: (u: number, y: number, scale: number) => {
+    // Mais largo sob o lábio, afinando em ponta arredondada no queixo
+    const top = 0.84;
+    const bottom = 0.84 - 0.2 * scale;
+    const t = smooth01((top - y) / (top - bottom));
+    const halfW = 0.11 * scale * (1 - 0.65 * t * t);
+    return Math.min(halfW - Math.abs(u), top - y, y - bottom);
+  },
+  /** Bigode ligado ao cavanhaque pelas laterais da boca (circle beard) */
+  ring: (u: number, y: number) => {
+    const dx = u / 0.2;
+    const dy = (y - 0.82) / 0.13;
+    const r = Math.sqrt(dx * dx + dy * dy);
+    return (1 - r) * 0.13;
+  },
+  /** Barba cheia: das costeletas, pela mandíbula, até o queixo */
+  full: (u: number, y: number, chinY: number, cheek: number) => {
+    const au = Math.abs(u);
+    // Linha das bochechas subindo até as costeletas; mandíbula subindo até sob a orelha
+    const top = 0.93 + 0.13 * smoothstep(0.18, 0.6, au) + cheek;
+    const bottom = chinY + (0.9 - chinY) * smoothstep(0.1, 0.62, au) ** 1.3;
+    // Costeleta termina arredondada na frente da orelha
+    const ear = 0.66 - au - 0.6 * Math.max(0, y - 0.98) ** 2;
+    return Math.min(top - y, y - bottom, ear);
+  },
+  mouth: (u: number, y: number, width: number) => {
+    const dx = u / width;
+    const dy = (y - 0.858) / 0.022;
+    return (Math.sqrt(dx * dx + dy * dy) - 1) * 0.022;
+  },
+};
 
 /**
  * Constrói o modelo 3D da Barba
- * Formato clássico e natural de barbas normais com aspecto 100% inteiriço,
- * sem gomos soltos ou cápsulas desconexas.
+ * Cada estilo é uma única malha contínua moldada ao rosto (bigode, cavanhaque e barba
+ * saem do mesmo campo de espessura, sem gomos soltos nem peças sobrepostas).
  */
 export function buildBeardModel(type: BeardType): THREE.Group {
   const group = new THREE.Group();
   if (type === "none") return group;
 
-  // Material acetinado escuro com polygonOffset agressivo para evitar qualquer Z-fighting com o corpo
   const beardMat = new THREE.MeshStandardMaterial({
     color: DEFAULT_HAIR_COLOR,
-    roughness: 0.55,
-    metalness: 0.06,
+    roughness: 0.6,
+    metalness: 0.05,
+    vertexColors: true,
     polygonOffset: true,
     polygonOffsetFactor: -2.0,
     polygonOffsetUnits: -8.0,
   });
 
-  const addMesh = (geo: THREE.BufferGeometry) => {
-    const m = new THREE.Mesh(geo, beardMat);
-    m.castShadow = true;
-    m.renderOrder = 2;
-    group.add(m);
-    return m;
-  };
+  // Espessura (metros) de cada região conforme o estilo
+  let thickness: (u: number, y: number) => number;
+  let sMax = 1.2;
 
-  // 1) GRANDE BIGODE ÚNICO (Peça contínua, encorpada e imponente sob o nariz)
+  const fiber = (u: number) => 1 + 0.08 * Math.sin(u * 70);
+  const soft = 0.012;
+  const layer = (d: number, t: number) => (d > 0 ? t * smooth01(d / soft) : -1);
+
   if (type === "mustache") {
-    addMesh(createUnifiedMustacheGeo(1.08));
-    return group;
+    thickness = (u, y) => layer(beardShapes.mustache(u, y, 1.05), 0.045 * fiber(u));
+  } else if (type === "goatee") {
+    thickness = (u, y) =>
+      Math.max(
+        layer(beardShapes.goatee(u, y, 1.0), 0.045 * fiber(u)),
+      );
+  } else if (type === "goatee_mustache") {
+    thickness = (u, y) => {
+      const ring = Math.min(beardShapes.ring(u, y), beardShapes.mouth(u, y, 0.1));
+      return Math.max(
+        layer(ring, 0.04 * fiber(u)),
+        layer(beardShapes.mustache(u, y, 1.0), 0.05),
+        layer(beardShapes.goatee(u, y, 0.95), 0.045 * fiber(u)),
+      );
+    };
+  } else {
+    const cfg =
+      type === "full_short"
+        ? { t: 0.026, chinY: 0.69, cheek: 0.0, must: 0.042 }
+        : type === "full_medium"
+        ? { t: 0.05, chinY: 0.62, cheek: 0.02, must: 0.062 }
+        : { t: 0.07, chinY: 0.4, cheek: 0.03, must: 0.08 };
+    const isLong = type === "full_thick";
+    if (isLong) sMax = 1.6;
+
+    thickness = (u, y) => {
+      let chinY = cfg.chinY;
+      if (isLong) {
+        // Ponta arredondada com mechas irregulares na base
+        chinY += 0.3 * (u / 0.3) ** 2 + 0.02 * Math.sin(u * 45);
+      }
+      const body = Math.min(beardShapes.full(u, y, chinY, cfg.cheek), beardShapes.mouth(u, y, 0.09));
+      // Mais volume no queixo do que nas costeletas
+      const bulk = cfg.t * (0.45 + 0.55 * (1 - smoothstep(0.1, 0.6, Math.abs(u))));
+      const hang = isLong ? 0.07 * smoothstep(0.8, 0.5, y) : 0;
+      return Math.max(
+        layer(body, (bulk + hang) * fiber(u)),
+        layer(beardShapes.mustache(u, y, 1.1), cfg.must),
+      );
+    };
   }
 
-  // 2) CAVANHAQUE GRANDE ÚNICO (Peça sólida inteiriça no queixo e sob o lábio)
-  if (type === "goatee") {
-    addMesh(createUnifiedGoateeGeo(1.08));
-    return group;
-  }
+  const geo = buildHeadShell({
+    sMin: 0.68,
+    sMax,
+    phiMin: -1.75,
+    phiMax: 1.75,
+    wrap: false,
+    nS: Math.round((sMax - 0.68) / 0.006),
+    nPhi: 200,
+    height: (s, phi) => {
+      const t = thickness(phi * HEAD_R, yAtS(s));
+      return t > 0 ? t : TUCK;
+    },
+    shade: (s, phi) => 0.95 + 0.12 * Math.sin(phi * HEAD_R * 70) + 0.1 * smoothstep(0.75, 1.0, yAtS(s)),
+  });
 
-  // 3) CAVANHAQUE + BIGODE (Circle Beard interligado clássico)
-  if (type === "goatee_mustache") {
-    addMesh(createUnifiedMustacheGeo(1.02));
-    addMesh(createUnifiedGoateeGeo(1.02));
-    addMesh(createSideConnectorGeo("left", 1.0));
-    addMesh(createSideConnectorGeo("right", 1.0));
-    return group;
-  }
-
-  // 4) BARBA CURTA COMPLETA (Designer Stubble / Barba Cerrada Alinhada de orelha a orelha)
-  if (type === "full_short") {
-    addMesh(createUnifiedMustacheGeo(0.98));
-    addMesh(createUnifiedGoateeGeo(0.96));
-    addMesh(createJawlineArchGeo(0.98, false));
-    addMesh(createSideConnectorGeo("left", 0.95));
-    addMesh(createSideConnectorGeo("right", 0.95));
-    return group;
-  }
-
-  // 5) BARBA CHEIA COMPLETA E TODA INTERLIGADA (Volume denso, maciço e 100% contínuo)
-  if (type === "full_medium") {
-    addMesh(createUnifiedMustacheGeo(1.14));
-    addMesh(createUnifiedGoateeGeo(1.15));
-    addMesh(createJawlineArchGeo(1.05, true));
-    addMesh(createCheekContourGeo("left", 1.05));
-    addMesh(createCheekContourGeo("right", 1.05));
-    addMesh(createSideConnectorGeo("left", 1.1));
-    addMesh(createSideConnectorGeo("right", 1.1));
-    // Preenchimento contínuo anatômico sob a mandíbula sem penetração esférica
-    addMesh(createChinPadGeo(1.05));
-    return group;
-  }
-
-  // 6) BARBÃO COMPLETO, CHEIO, INTERLIGADO E COMPRIDO (Estilo Viking / Lenhador majestoso)
-  if (type === "full_thick") {
-    addMesh(createUnifiedMustacheGeo(1.20));
-    addMesh(createJawlineArchGeo(1.12, true));
-    addMesh(createCheekContourGeo("left", 1.12));
-    addMesh(createCheekContourGeo("right", 1.12));
-    addMesh(createSideConnectorGeo("left", 1.15));
-    addMesh(createSideConnectorGeo("right", 1.15));
-    addMesh(createUnifiedLongBeardGeo(1.18));
-    // Preenchimento contínuo sob o queixo sem esfera invasiva
-    addMesh(createChinPadGeo(1.15));
-    return group;
-  }
-
+  const mesh = new THREE.Mesh(geo, beardMat);
+  mesh.castShadow = true;
+  mesh.renderOrder = 2;
+  group.add(mesh);
   return group;
 }
 

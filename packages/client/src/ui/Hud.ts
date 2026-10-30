@@ -1,6 +1,8 @@
 import {
   formatInGameClock,
   getAmmoCost,
+  getArmorRepairCost,
+  getArmorUpgradeCost,
   getHordeStatus,
   GUN_TIERS,
   KNIFE_TIERS,
@@ -145,6 +147,8 @@ export class Hud {
   private readonly shopArmorStat = $("shop-armor-stat");
   private readonly btnBuyArmor = $<HTMLButtonElement>("btn-buy-armor");
   private readonly btnBuyArmorText = $("btn-buy-armor-text");
+  private readonly btnRepairArmor = $<HTMLButtonElement>("btn-repair-armor");
+  private readonly btnRepairArmorText = $("btn-repair-armor-text");
 
   private readonly shopDefibrillatorStatus = $("shop-defibrillator-status");
   private readonly btnBuyDefibrillator = $<HTMLButtonElement>("btn-buy-defibrillator");
@@ -154,6 +158,7 @@ export class Hud {
   private readonly shopFlareStat = $("shop-flare-stat");
   private readonly btnBuyFlare = $<HTMLButtonElement>("btn-buy-flare");
   private readonly btnBuyFlareText = $("btn-buy-flare-text");
+  private readonly roomCode = $("hud-room-code");
 
   private latestPlayer: NetPlayer | null = null;
   private latestState: NetArenaState | null = null;
@@ -167,9 +172,7 @@ export class Hud {
 
   private rosterSignature = "";
 
-  constructor(code: string, private readonly shareUrl: string) {
-    $("hud-room-code").textContent = code;
-    $("btn-copy-link").addEventListener("click", () => void this.copyLink());
+  constructor() {
     this.initPips();
     this.initInventoryClicks();
     this.initShopClicks();
@@ -201,7 +204,8 @@ export class Hud {
     this.btnBuyAmmo.addEventListener("click", (e) => triggerBuy("ammo", e));
     this.btnBuyBandage.addEventListener("click", (e) => triggerBuy("bandage", e));
     this.btnBuyC4.addEventListener("click", (e) => triggerBuy("c4", e));
-    this.btnBuyArmor.addEventListener("click", (e) => triggerBuy("armor", e));
+    this.btnBuyArmor.addEventListener("click", (e) => triggerBuy("armor_upgrade", e));
+    this.btnRepairArmor.addEventListener("click", (e) => triggerBuy("armor_repair", e));
     this.btnBuyDefibrillator.addEventListener("click", (e) => triggerBuy("defibrillator", e));
     this.btnBuyFlare.addEventListener("click", (e) => triggerBuy("flare", e));
 
@@ -356,6 +360,11 @@ export class Hud {
 
   /** Atualiza o relógio acelerado do jogo e o estado das hordas oficiais */
   updateGameState(state: NetArenaState): void {
+    // 0) Código da sala no canto superior direito
+    if (state.code && this.roomCode.textContent !== state.code) {
+      this.roomCode.textContent = state.code;
+    }
+
     // 1) Relógio acelerado de sobrevivência
     const gameTime = state.gameTime ?? 0;
     const clock = formatInGameClock(gameTime);
@@ -570,11 +579,15 @@ export class Hud {
     const maxArmor = player.maxArmor ?? 4;
     const isMax = maxArmor >= 14;
     const nextMax = Math.min(14, maxArmor + 2);
-    const armorCost = 5;
+    const armorCost = getArmorUpgradeCost(maxArmor) ?? 0;
+    const repairCost = getArmorRepairCost(maxArmor);
+    const isArmorFull = armor >= maxArmor;
     this.shopArmorStatus.textContent = `${armor}/${maxArmor} Pts`;
     this.shopArmorStat.textContent = isMax ? `Máximo (${maxArmor} Pts)` : `Upgrade: +2 Pts (${maxArmor} ➔ ${nextMax})`;
     this.btnBuyArmor.disabled = coins < armorCost || isMax;
     this.btnBuyArmorText.textContent = isMax ? "✓ Nível Máx" : `🪙 ${armorCost}`;
+    this.btnRepairArmor.disabled = coins < repairCost || isArmorFull;
+    this.btnRepairArmorText.textContent = isArmorFull ? "✓ FULL" : `🪙 ${repairCost}`;
 
     // 6.5) Desfibrilador (Dispositivo Médico para Reviver Amigo Morto - 30 moedas)
     const hasDefibrillator = player.slot2 === "defibrillator" || player.slot3 === "defibrillator";
@@ -724,22 +737,6 @@ export class Hud {
 
   toast(_message: string, _ms = 2200): void {
     // Nenhuma mensagem flutuante deve aparecer no topo da tela
-  }
-
-  private async copyLink(): Promise<void> {
-    const btn = document.getElementById("btn-copy-link");
-    const originalHtml = btn ? btn.innerHTML : "";
-    try {
-      await navigator.clipboard.writeText(this.shareUrl);
-      if (btn) {
-        btn.textContent = "✓ Copied!";
-        setTimeout(() => {
-          if (btn) btn.innerHTML = originalHtml;
-        }, 1800);
-      }
-    } catch {
-      window.prompt("Copy room link:", this.shareUrl);
-    }
   }
 
   getFormattedSurvivalTime(): string {

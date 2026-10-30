@@ -17,7 +17,7 @@ export class AmmoBoxView {
   private readonly crateMesh: THREE.Mesh;
   private readonly floatingIcon: THREE.Group;
   private readonly glow: THREE.Sprite;
-  private readonly baseY: number;
+  private baseY: number;
   private active = true;
 
   constructor(x: number, y: number, z: number, kind = "ammo") {
@@ -567,6 +567,12 @@ export class AmmoBoxView {
       this.glow.scale.set(1.8, 1.8, 1);
       this.root.add(this.glow);
     }
+  }
+
+  /** Move o item para uma nova posição (itens que reaparecem em locais aleatórios). */
+  setPosition(x: number, y: number, z: number): void {
+    this.baseY = y + 0.35;
+    this.root.position.set(x, this.baseY, z);
   }
 
   sync(active: boolean): void {

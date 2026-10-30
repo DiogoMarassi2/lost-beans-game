@@ -12,6 +12,7 @@ import {
   CORPSE_DECAY_TIME,
   DEFIBRILLATOR_REVIVE_RADIUS,
   ENEMY_CONFIGS,
+  findRandomItemSpot,
   GUN_TIERS,
   HOUSE_COLLIDERS,
   KNIFE_TIERS,
@@ -22,6 +23,7 @@ import {
   MAP_MIN_Z,
   OBSTACLES,
   PLAYER_MAX_HP,
+  RANDOM_ITEM_MIN_SPACING,
   RELOAD_TIME,
   type BoxCollider,
   type EnemyTypeId,
@@ -382,6 +384,19 @@ export class CombatSystem {
         if (!box.active) {
           box.respawnTimer -= dt;
           if (box.respawnTimer <= 0) {
+            // Itens sorteados reaparecem em um novo local aleatório do mapa
+            if (box.id.startsWith("item_rand_")) {
+              const others: { x: number; z: number }[] = [];
+              state.ammoBoxes.forEach((b) => {
+                if (b !== box && b.active) others.push(b);
+              });
+              const spot = findRandomItemSpot(others, RANDOM_ITEM_MIN_SPACING);
+              if (spot) {
+                box.x = spot.x;
+                box.y = spot.y;
+                box.z = spot.z;
+              }
+            }
             box.active = true;
             box.respawnTimer = 0;
           }

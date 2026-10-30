@@ -284,41 +284,67 @@ export class NetworkManager {
     return this.room?.state ?? null;
   }
 
-  async connect(name: string, roomCode?: string, appearance?: CharacterAppearance): Promise<void> {
-    if (roomCode) {
-      this.setRoomCode(roomCode);
-    } else if (!this.code) {
-      this.setRoomCode(generateRoomCode());
-    }
+  /**
+   * Conecta a uma sala.
+   * - "create": entra na sala com esse código ou cria uma nova.
+   * - "join": só entra se a sala já existir (senão lança erro; ver `isRoomNotFoundError`).
+   * Se já estiver em outra sala, só sai dela depois que a nova conexão der certo.
+   */
+  async connect(
+    name: string,
+    roomCode?: string,
+    appearance?: CharacterAppearance,
+    mode: "create" | "join" = "create",
+  ): Promise<void> {
+    const code = sanitizeRoomCode(roomCode) || this.code || generateRoomCode();
 
     this.setStatus("connecting");
     const options: JoinOptions = {
-      code: this.code,
+      code,
       name,
       ...(appearance ?? {}),
     };
+    let room: Room<NetArenaState>;
     try {
-      // filterBy(["code"]) no servidor: entra na sala com esse código ou cria uma nova
-      const room = await this.client.joinOrCreate<NetArenaState>(ROOM_NAME, options);
-      this.room = room;
-      this.setStatus("online");
-
-      room.onStateChange((state) => this.onStateChange?.(state));
-      room.onMessage("player_revived", (data) => {
-        this.onPlayerRevived?.(data);
-      });
-      room.onLeave((code) => {
-        console.warn(`[Network] desconectado da sala (código ${code})`);
-        this.room = null;
-        this.setStatus("offline");
-      });
-      room.onError((code, message) => {
-        console.error(`[Network] erro ${code}: ${message ?? ""}`);
-      });
+      // filterBy(["code"]) no servidor: a sala é identificada pelo código
+      room =
+        mode === "join"
+          ? await this.client.join<NetArenaState>(ROOM_NAME, options)
+          : await this.client.joinOrCreate<NetArenaState>(ROOM_NAME, options);
     } catch (err) {
-      this.setStatus("offline");
+      // Continua na sala anterior, se havia uma
+      this.setStatus(this.room ? "online" : "offline");
       throw err;
     }
+
+    const previous = this.room;
+    this.room = room;
+    this.setRoomCode(code);
+    this.setStatus("online");
+    if (previous && previous !== room) previous.leave();
+
+    room.onStateChange((state) => {
+      // Ignora atualizações de uma sala que já foi deixada
+      if (this.room === room) this.onStateChange?.(state);
+    });
+    room.onMessage("player_revived", (data) => {
+      this.onPlayerRevived?.(data);
+    });
+    room.onLeave((leaveCode) => {
+      console.warn(`[Network] desconectado da sala (código ${leaveCode})`);
+      // Ignora a saída de uma sala antiga (após trocar de sala)
+      if (this.room !== room) return;
+      this.room = null;
+      this.setStatus("offline");
+    });
+    room.onError((errCode, message) => {
+      console.error(`[Network] erro ${errCode}: ${message ?? ""}`);
+    });
+  }
+
+  /** Erro do servidor quando não existe sala com o código informado. */
+  static isRoomNotFoundError(err: unknown): boolean {
+    return (err as { code?: number } | null)?.code === 4211;
   }
 
   sendUpdateAppearance(appearance: CharacterAppearance, name?: string): void {

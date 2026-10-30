@@ -64,7 +64,7 @@ sceneManager.add(arena.group, campfire.group, ambience.points);
 const sound = new SoundManager();
 const input = new InputManager(sceneManager.canvas, cameraController.camera);
 const network = new NetworkManager();
-const hud = new Hud(network.code, network.shareUrl);
+const hud = new Hud();
 const deathScreen = new DeathScreen();
 const victoryScreen = new VictoryScreen();
 const welcomeModal = new WelcomeAlertModal();
@@ -594,6 +594,17 @@ network.onStateChange = (state: NetArenaState) => {
         sound.playShopBuy();
       }
 
+      // Som metálico quando a armadura absorve dano (sem perda de vida no mesmo tick)
+      if (
+        localPrevArmor !== undefined &&
+        (p.armor ?? 0) < localPrevArmor &&
+        p.hp > 0 &&
+        !(localPrevHp !== undefined && p.hp < localPrevHp)
+      ) {
+        sound.playArmorHit();
+        cameraController.addShake(0.18);
+      }
+
       // Som e resposta tátil quando o jogador local pisa na gosma ácida e toma dano
       if (
         (localPrevHp !== undefined && p.hp < localPrevHp) ||
@@ -783,6 +794,9 @@ network.onStateChange = (state: NetArenaState) => {
         bView = new AmmoBoxView(box.x, box.y, box.z, box.kind ?? "ammo");
         ammoBoxViews.set(id, bView);
         sceneManager.add(bView.root);
+      }
+      if (bView.root.position.x !== box.x || bView.root.position.z !== box.z) {
+        bView.setPosition(box.x, box.y, box.z);
       }
       bView.sync(box.active);
     });

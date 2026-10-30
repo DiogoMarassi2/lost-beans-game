@@ -200,12 +200,14 @@ export class CharacterPreview {
     }
 
     const hair = (app.hair || "bald") as HairType;
-    if (hair !== this.currentHair) {
+    const hat = (app.hat || "none") as HatType;
+    // O cabelo é refeito também quando o chapéu muda (fica achatado dentro dele)
+    if (hair !== this.currentHair || hat !== this.currentHat) {
       this.currentHair = hair;
       while (this.hairGroup.children.length > 0) {
         this.hairGroup.remove(this.hairGroup.children[0]!);
       }
-      this.hairGroup.add(buildHairModel(hair));
+      this.hairGroup.add(buildHairModel(hair, hat));
     }
 
     const eyes = (app.eyes || "oval_medium") as EyeType;
@@ -223,7 +225,6 @@ export class CharacterPreview {
       this.beardGroup.add(buildBeardModel(beard));
     }
 
-    const hat = (app.hat || "none") as HatType;
     if (hat !== this.currentHat) {
       this.currentHat = hat;
       while (this.hatGroup.children.length > 0) {

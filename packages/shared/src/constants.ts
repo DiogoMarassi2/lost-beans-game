@@ -188,6 +188,13 @@ export const ITEM_SPAWNS: readonly ItemSpawn[] = [
   { id: "item_bunker_ammo", kind: "ammo", x: 90.0, y: 0.1, z: -28.0 },
   { id: "item_bunker_coin", kind: "coin", x: 100.0, y: 0.1, z: -25.0 },
 ];
+/** Quantidade de caixas de munição espalhadas aleatoriamente pelo mapa (sorteadas a cada partida e a cada reaparecimento). */
+export const RANDOM_AMMO_COUNT = 40;
+/** Quantidade de moedas espalhadas aleatoriamente pelo mapa (sorteadas a cada partida e a cada reaparecimento). */
+export const RANDOM_COIN_COUNT = 40;
+/** Distância mínima entre dois itens sorteados (evita aglomerados). */
+export const RANDOM_ITEM_MIN_SPACING = 4.0;
+
 export const AMMO_SPAWNS = ITEM_SPAWNS;
 export const AMMO_BOX_RADIUS = ITEM_PICKUP_RADIUS;
 export const AMMO_BOX_RESPAWN_TIME = ITEM_RESPAWN_TIME;
@@ -907,8 +914,6 @@ export const EXPANDED_SOUTH_COLLIDERS: ReadonlyArray<BoxCollider> = [
   { minX: 1.8, maxX: 4.2, minZ: -24.4, maxZ: -23.8 }, // Frente Leste
   // Balcão do Diner em ferradura
   { minX: -2.2, maxX: 2.2, minZ: -28.5, maxZ: -27.5 },
-  // Caçamba e mesas no pátio externo
-  { minX: -5.8, maxX: -4.6, minZ: -22.5, maxZ: -20.5 },
 
   // 2) Pátio de Contêineres de Carga (X: 22 a 34, Z: -32 a -18)
   // Contêiner Vermelho Ferrugem
@@ -971,6 +976,15 @@ export const REAL_SECONDS_PER_IN_GAME_HOUR = 15.0;
 
 /** Momento de disparo da 1ª Horda Oficial (180s reais: 3 minutos de tempo inicial para leitura e preparação). */
 export const HORDE_1_TRIGGER_REAL_SECONDS = 180.0;
+
+/**
+ * Segundos reais entre o jogador abrir a porta da casinha inicial e o início da 1ª Horda.
+ * O relógio das hordas fica congelado até a porta ser aberta pela primeira vez.
+ */
+export const HORDE_1_DELAY_AFTER_CABIN_DOOR_SECONDS = 60.0;
+
+/** ID da porta da casinha inicial cuja abertura dispara o relógio das hordas. */
+export const START_CABIN_DOOR_ID = "door_cabin";
 
 /** Momento de disparo da 2ª Horda Oficial (250s reais: 55s combate H1 + 15s pausa). */
 export const HORDE_2_TRIGGER_REAL_SECONDS = 250.0;
@@ -1040,6 +1054,14 @@ export const getHordeStatus = (
   currentHorde: number,
 ): { targetHorde: number; isActive: boolean; badgeText: string } => {
   if (currentHorde === 0) {
+    // Relógio ainda congelado: ninguém abriu a porta da casinha inicial
+    if (realSeconds < HORDE_1_TRIGGER_REAL_SECONDS - HORDE_1_DELAY_AFTER_CABIN_DOOR_SECONDS) {
+      return {
+        targetHorde: 1,
+        isActive: false,
+        badgeText: "OPEN THE DOOR TO BEGIN",
+      };
+    }
     const remaining = Math.max(0, Math.ceil(HORDE_1_TRIGGER_REAL_SECONDS - realSeconds));
     const mins = Math.floor(remaining / 60);
     const secs = remaining % 60;
@@ -1392,4 +1414,43 @@ export const DEFIBRILLATOR_BUY_COST = 30;
 
 /** Alcance máximo em metros para alcançar e reviver um amigo caído. */
 export const DEFIBRILLATOR_REVIVE_RADIUS = 3.2;
+
+// ─── Armadura (Colete Balístico) ─────────────────────────────────────────────
+/** Pontos máximos de armadura no nível 1 (inicial). */
+export const ARMOR_BASE_MAX = 4;
+/** Pontos de armadura ganhos a cada upgrade de nível. */
+export const ARMOR_POINTS_PER_LEVEL = 2;
+/** Nível máximo da armadura (4 ➔ 6 ➔ 8 ➔ 10 ➔ 12 ➔ 14 Pts). */
+export const MAX_ARMOR_LEVEL = 6;
+
+/** Custo para subir PARA cada nível da armadura (índice = nível; níveis 0 e 1 não são comprados). */
+export const ARMOR_UPGRADE_COSTS: readonly number[] = [0, 0, 20, 40, 80, 160, 320];
+
+/** Custo para regenerar totalmente os pontos de armadura em cada nível (índice = nível). */
+export const ARMOR_REPAIR_COSTS: readonly number[] = [0, 5, 10, 20, 30, 40, 50];
+
+/** Converte os pontos máximos de armadura no nível atual (1..MAX_ARMOR_LEVEL). */
+export const getArmorLevel = (maxArmor: number): number =>
+  Math.max(
+    1,
+    Math.min(
+      MAX_ARMOR_LEVEL,
+      Math.round(((maxArmor || ARMOR_BASE_MAX) - ARMOR_BASE_MAX) / ARMOR_POINTS_PER_LEVEL) + 1,
+    ),
+  );
+
+/** Pontos máximos de armadura de um determinado nível. */
+export const getArmorMaxForLevel = (level: number): number =>
+  ARMOR_BASE_MAX + (Math.max(1, Math.min(MAX_ARMOR_LEVEL, level)) - 1) * ARMOR_POINTS_PER_LEVEL;
+
+/** Custo do próximo upgrade de armadura (ou null se já estiver no nível máximo). */
+export const getArmorUpgradeCost = (maxArmor: number): number | null => {
+  const level = getArmorLevel(maxArmor);
+  if (level >= MAX_ARMOR_LEVEL) return null;
+  return ARMOR_UPGRADE_COSTS[level + 1] ?? null;
+};
+
+/** Custo para regenerar a armadura no nível atual. */
+export const getArmorRepairCost = (maxArmor: number): number =>
+  ARMOR_REPAIR_COSTS[getArmorLevel(maxArmor)] ?? 5;
 

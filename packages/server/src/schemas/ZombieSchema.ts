@@ -32,6 +32,8 @@ export class ZombieSchema extends Schema {
   // IA de Patrulha / Perseguição
   aiMode: "wandering" | "chasing" = "wandering";
   isHunter = false; // Se true, foi spawnado como caçador direto
+  /** Zumbi de horda que pode esquecer o jogador: segundos restantes de perseguição garantida (nasce longe, a ≥22m). */
+  huntGraceTimer = 0;
   patrolTargetX = 0;
   patrolTargetZ = 0;
   patrolTimer = 0;
