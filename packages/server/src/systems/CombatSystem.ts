@@ -14,7 +14,6 @@ import {
   ENEMY_CONFIGS,
   findRandomItemSpot,
   GUN_TIERS,
-  HOUSE_COLLIDERS,
   KNIFE_TIERS,
   MAGAZINE_SIZE,
   MAP_MAX_X,
@@ -28,6 +27,7 @@ import {
   type BoxCollider,
   type EnemyTypeId,
   type InputMessage,
+  getStaticCollidersNear,
 } from "@dark-beans/shared";
 import type { ArenaState } from "../schemas/ArenaState";
 import { AmmoBoxSchema } from "../schemas/AmmoBoxSchema";
@@ -321,7 +321,7 @@ export class CombatSystem {
       }
 
       // Colisão com paredes da casa e carros do ferro velho
-      for (const box of HOUSE_COLLIDERS) {
+      for (const box of getStaticCollidersNear(bullet.x, bullet.z)) {
         if (
           bullet.x >= box.minX - BULLET_RADIUS &&
           bullet.x <= box.maxX + BULLET_RADIUS &&

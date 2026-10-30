@@ -132,6 +132,41 @@ export const getActiveDoorColliders = (
   return colliders;
 };
 
+// ─── Grade espacial dos colisores estáticos ─────────────────────────────────
+// Evita testar todos os ~150 colisores do mapa a cada movimento: cada célula guarda só os
+// colisores próximos (com folga para o maior raio de entidade), na mesma ordem da lista original.
+const GRID_CELL = 4;
+const GRID_MARGIN = 2.5;
+const GRID_COLS = Math.ceil((MAP_MAX_X - MAP_MIN_X) / GRID_CELL) + 1;
+const GRID_ROWS = Math.ceil((MAP_MAX_Z - MAP_MIN_Z) / GRID_CELL) + 1;
+let colliderGrid: BoxCollider[][] | null = null;
+
+const gridCol = (x: number) => clamp(Math.floor((x - MAP_MIN_X) / GRID_CELL), 0, GRID_COLS - 1);
+const gridRow = (z: number) => clamp(Math.floor((z - MAP_MIN_Z) / GRID_CELL), 0, GRID_ROWS - 1);
+
+const buildColliderGrid = (): BoxCollider[][] => {
+  const grid: BoxCollider[][] = Array.from({ length: GRID_COLS * GRID_ROWS }, () => []);
+  for (const box of HOUSE_COLLIDERS) {
+    const c0 = gridCol(box.minX - GRID_MARGIN);
+    const c1 = gridCol(box.maxX + GRID_MARGIN);
+    const r0 = gridRow(box.minZ - GRID_MARGIN);
+    const r1 = gridRow(box.maxZ + GRID_MARGIN);
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) grid[r * GRID_COLS + c]!.push(box);
+    }
+  }
+  return grid;
+};
+
+/**
+ * Colisores estáticos que podem tocar uma entidade (raio até 2.5m) na posição (x, z).
+ * Use no lugar de percorrer HOUSE_COLLIDERS inteiro.
+ */
+export const getStaticCollidersNear = (x: number, z: number): readonly BoxCollider[] => {
+  colliderGrid ??= buildColliderGrid();
+  return colliderGrid[gridRow(z) * GRID_COLS + gridCol(x)]!;
+};
+
 /** Empurra um círculo para fora de obstáculos circulares, paredes da casa, portas fechadas e limites do mapa. */
 export const resolveStatic = (
   pos: Vec2 & { y?: number },
@@ -154,7 +189,7 @@ export const resolveStatic = (
 
   // 2) Colisores retangulares das paredes da casa e grades da varanda
   const currentY = pos.y ?? calculateElevation(pos.x, pos.z, pos.y ?? 0);
-  for (const box of HOUSE_COLLIDERS) {
+  for (const box of getStaticCollidersNear(pos.x, pos.z)) {
     if (box.minY !== undefined && currentY < box.minY) continue;
     if (box.maxY !== undefined && currentY > box.maxY) continue;
 

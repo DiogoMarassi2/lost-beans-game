@@ -17,7 +17,6 @@ import {
   HORDE_11_TRIGGER_REAL_SECONDS,
   HORDE_12_TRIGGER_REAL_SECONDS,
   HORDE_13_TRIGGER_REAL_SECONDS,
-  HOUSE_COLLIDERS,
   isInsideCoveredBuilding,
   MAP_MAX_X,
   MAP_MAX_Z,
@@ -49,6 +48,7 @@ import {
   ZOMBIE_ATTACK_COOLDOWN,
   type BoxCollider,
   type EnemyTypeId,
+  getStaticCollidersNear,
 } from "@dark-beans/shared";
 import type { ArenaState } from "../schemas/ArenaState";
 import type { PlayerSchema } from "../schemas/PlayerSchema";
@@ -2228,7 +2228,7 @@ export class WaveSystem {
       }
 
       // 3) Colisão com paredes da casa e veículos
-      for (const box of HOUSE_COLLIDERS) {
+      for (const box of getStaticCollidersNear(spit.x, spit.z)) {
         if (
           spit.x >= box.minX - SPIT_RADIUS &&
           spit.x <= box.maxX + SPIT_RADIUS &&

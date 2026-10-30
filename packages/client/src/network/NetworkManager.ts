@@ -236,6 +236,9 @@ export class NetworkManager {
 
   private readonly client: Client;
   private seq = 0;
+  /** Tempo de ida e volta até o servidor (ms), suavizado. 0 até a primeira medição. */
+  rttMs = 0;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.code = NetworkManager.getRoomFromUrl() || "";
@@ -342,6 +345,11 @@ export class NetworkManager {
     room.onMessage("player_revived", (data) => {
       this.onPlayerRevived?.(data);
     });
+    room.onMessage("pong", (sentAt: number) => {
+      const sample = performance.now() - sentAt;
+      this.rttMs = this.rttMs === 0 ? sample : this.rttMs * 0.8 + sample * 0.2;
+    });
+    this.startPing();
     room.onLeave((leaveCode) => {
       console.warn(`[Network] desconectado da sala (código ${leaveCode})`);
       // Ignora a saída de uma sala antiga (após trocar de sala)
@@ -352,6 +360,14 @@ export class NetworkManager {
     room.onError((errCode, message) => {
       console.error(`[Network] erro ${errCode}: ${message ?? ""}`);
     });
+  }
+
+  /** Mede a latência a cada 2s (usada para corrigir a predição do jogador local). */
+  private startPing(): void {
+    if (this.pingTimer) return;
+    const ping = () => this.room?.send("ping", performance.now());
+    ping();
+    this.pingTimer = setInterval(ping, 2000);
   }
 
   /** Erro do servidor quando não existe sala com o código informado. */

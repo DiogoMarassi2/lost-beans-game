@@ -6,6 +6,7 @@ import {
   getActiveDoorColliders,
   GUN_TIERS,
   INPUT_SEND_RATE,
+  TICK_MS,
   KNIFE_TIERS,
   MAGAZINE_SIZE,
   PLAYER_RADIUS,
@@ -1328,6 +1329,9 @@ sceneManager.renderer.setAnimationLoop(() => {
         resolveStatic(predictor, PLAYER_RADIUS, activeDoorColliders);
       }
     }
+    // Latência até a posição do servidor refletir o input: ping + meio tick do servidor (calibrado em simulação)
+    predictor.latencyMs = network.rttMs + TICK_MS / 2;
+    predictor.record();
     if (serverLocal) predictor.reconcile(serverLocal.x, serverLocal.z, move.dx !== 0 || move.dz !== 0, dt, serverLocal.y);
 
     localView.setPose(predictor.x, predictor.y, predictor.z, lastAim);

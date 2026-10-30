@@ -642,6 +642,11 @@ export class ArenaRoom extends Room<ArenaState> {
     });
 
     // ─── Atualização de Aparência / Nome em Tempo Real no Lobby ────────
+    // Medição de latência: devolve o carimbo de tempo do cliente imediatamente
+    this.onMessage("ping", (client, t: unknown) => {
+      if (typeof t === "number") client.send("pong", t);
+    });
+
     this.onMessage("update_appearance", (client, data: { name?: string; color?: string; hair?: string; eyes?: string; beard?: string; hat?: string }) => {
       const p = this.state.players.get(client.sessionId);
       if (!p) return;
@@ -681,7 +686,11 @@ export class ArenaRoom extends Room<ArenaState> {
     });
 
     this.setPatchRate(TICK_MS);
-    this.setSimulationInterval((deltaMs) => this.update(deltaMs / 1000), TICK_MS);
+    this.setSimulationInterval((deltaMs) => {
+      const t0 = performance.now();
+      this.update(deltaMs / 1000);
+      this.recordTickStats(performance.now() - t0, deltaMs);
+    }, TICK_MS);
 
     console.log(`[ArenaRoom] sala ${code} criada (${this.roomId})`);
   }
@@ -882,6 +891,32 @@ export class ArenaRoom extends Room<ArenaState> {
     };
     spawnKind("ammo", RANDOM_AMMO_COUNT);
     spawnKind("coin", RANDOM_COIN_COUNT);
+  }
+
+  private tickStats = { count: 0, totalMs: 0, maxMs: 0, maxGapMs: 0, patchMs: 0, since: Date.now() };
+
+  override broadcastPatch(): boolean {
+    if (!process.env.LOG_TICK_STATS) return super.broadcastPatch();
+    const t0 = performance.now();
+    const result = super.broadcastPatch();
+    this.tickStats.patchMs += performance.now() - t0;
+    return result;
+  }
+
+  /** Com LOG_TICK_STATS=1, registra a cada 10s o custo da simulação (diagnóstico de lag no servidor). */
+  private recordTickStats(ms: number, gapMs: number): void {
+    if (!process.env.LOG_TICK_STATS) return;
+    const st = this.tickStats;
+    st.count++;
+    st.totalMs += ms;
+    st.maxMs = Math.max(st.maxMs, ms);
+    st.maxGapMs = Math.max(st.maxGapMs, gapMs);
+    if (Date.now() - st.since >= 10_000) {
+      console.log(
+        `[ArenaRoom ${this.state.code}] tick médio ${(st.totalMs / st.count).toFixed(2)}ms | patch médio ${(st.patchMs / st.count).toFixed(2)}ms | pior ${st.maxMs.toFixed(1)}ms | maior intervalo ${st.maxGapMs.toFixed(0)}ms | zumbis ${this.state.zombies.size}`,
+      );
+      this.tickStats = { count: 0, totalMs: 0, maxMs: 0, maxGapMs: 0, patchMs: 0, since: Date.now() };
+    }
   }
 
   private sanitizeName(raw: unknown, index: number): string {
